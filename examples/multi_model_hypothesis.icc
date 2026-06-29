@@ -1,0 +1,29 @@
+# c1
+> (openai + claude).best
+< cost <= $3.33
+< latency <= 3m
+@forward c2
+@text <500
+
+Find a realistic HFT hypothesis for Binance USDM.
+Account for fees, latency, fill probability, adverse selection, and overfit risk.
+Return a compact hypothesis with the market condition, expected edge, and failure modes.
+
+# c2
+> openrouter:openrouter/auto
+@forward c3
+@text <700
+
+Critically review the candidate from %from c1.
+Keep the idea only if it can survive live fees, real queue priority, and stale-book risk.
+Return:
+hypothesis =
+reason =
+blocking_risks =
+
+# c3
+> claude.max
+@file -markdown hypothesis_report.md
+
+Package the reviewed idea from %from c2 as a short research memo.
+Include assumptions, measurements needed, rejection criteria, and the next experiment.
