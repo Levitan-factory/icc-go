@@ -1,0 +1,34 @@
+# c1
+> claude.code
+@forward c2
+@file -python validator.py
+
+Write a small Python validator for ICC example notebooks.
+It should parse cells marked as "# cN", validate that every cell has at most one route line, and report unresolved %from references.
+Return the requested file as an artifact section:
+--- file: validator.py ---
+
+# c2
+> openai.fast
+@forward c3
+@file -markdown implementation_notes.md
+
+Write concise implementation notes for the validator produced in %from c1.
+Explain the parsing assumptions, expected limitations, and extension points.
+Return the requested file as an artifact section:
+--- file: implementation_notes.md ---
+
+# c3
+> openai.code
+@forward c4
+@file -python validator_test.py
+
+Create a focused pytest suite for the validator produced in %from c1.
+Cover valid notebooks, duplicate routing lines, missing references, and empty cells.
+
+# c4
+> claude.max
+@file -markdown release_patch.md
+
+Review %from c1, %from c2, and %from c3 as if this were a pull request.
+List the implementation risks and any missing tests.
