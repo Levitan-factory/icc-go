@@ -1,0 +1,39 @@
+# c1
+> openai.max
+< cost <= $2.00
+< latency <= 1m
+@forward c2
+@text <600
+
+Propose one market-making experiment for Binance USDM.
+Return:
+pnl = <expected net ticks>
+reason = <short explanation>
+risk = <main failure mode>
+
+# c2
+> openrouter:openrouter/auto
+@if pnl > 0 -> c3
+@else -> c4
+
+Evaluate %from c1.
+Extract the expected net ticks into pnl and decide whether the idea deserves implementation.
+Return exactly parseable lines:
+pnl = <single numeric value>
+reason = <short decision rationale>
+
+# c3
+> claude.code
+@file -python strategy.py
+
+Implement the accepted idea from %from c2 as pseudocode-level Python.
+Include comments for data requirements, live safety limits, and stop conditions.
+Return the requested file as an artifact section:
+--- file: strategy.py ---
+
+# c4
+> claude.max
+@file -markdown rejection_notes.md
+
+Explain why the idea from %from c2 should be rejected or redesigned.
+Suggest the next measurement before another implementation attempt.
