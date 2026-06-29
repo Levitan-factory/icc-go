@@ -1,0 +1,24 @@
+# c1
+> claude.max
+< tokens <= 50000
+@forward c2
+@file -markdown risk_notes.md
+
+Review the attached contract.
+Identify obligations, termination rights, payment risks, confidentiality constraints, and clauses that need legal review.
+Write the output as concise notes with section references.
+
+# c2
+> openai.fast
+@forward c3
+@text <800
+
+Turn %from c1 into a negotiation checklist.
+Separate must-change items from acceptable risks.
+
+# c3
+> (claude + openai).best
+@file -markdown redline_brief.md
+
+Use %from c1 and %from c2 to produce a final redline brief.
+Keep it factual and avoid inventing missing contract language.
