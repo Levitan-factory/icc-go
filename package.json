@@ -1,0 +1,42 @@
+{
+  "name": "icc-go",
+  "version": "0.1.11",
+  "private": false,
+  "type": "module",
+  "description": "ICC-GO is an Intent-Cell Coding notebook for executable LLM workflows.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "demo:gif": "python3 scripts/create-demo-gif.py",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test && npm run test:e2e",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7",
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Levitan-factory/icc-go.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Levitan-factory/icc-go/issues"
+  },
+  "homepage": "https://icc-go.com/"
+}
