@@ -63,7 +63,7 @@ function createNotebook(): Notebook {
       createCell(
         "c3",
         "Export final spec",
-        "> openrouter:openrouter/auto\n@file -markdown final_spec.md",
+        "> auto\n@file -markdown final_spec.md",
         "Rewrite the product spec using %from c1 and %from c2.\nProduce a concise Markdown file with assumptions, user flows, acceptance criteria, and open questions.",
       ),
     ],

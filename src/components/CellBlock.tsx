@@ -981,7 +981,6 @@ export function createRoutingSuggestions(settings: WorkspaceSettings): EditorSug
   aliases.forEach((alias) => {
     push({ label: alias, insertText: alias, detail: "provider alias" });
     push({ label: `${alias}.max`, insertText: `${alias}.max`, detail: "strongest profile" });
-    push({ label: `${alias}.ensemble`, insertText: `${alias}.ensemble`, detail: "ensemble profile" });
   });
 
   settings.providers.filter((provider) => provider.enabled).forEach((provider) => {

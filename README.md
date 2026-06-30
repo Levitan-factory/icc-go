@@ -36,7 +36,7 @@ Critique %from c1.
 Identify missing requirements, ambiguous scope, privacy risks, and launch blockers.
 
 # c3
-> openrouter:openrouter/auto
+> auto
 @file -markdown final_spec.md
 
 Rewrite the product spec using %from c1 and %from c2.

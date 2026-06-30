@@ -18,7 +18,9 @@ describe("cell editor suggestions", () => {
     const visible = routingEditorSuggestions(suggestions, "openai.max").map((suggestion) => suggestion.insertText);
 
     expect(visible).toEqual([]);
-    expect(routingEditorSuggestions(suggestions, "openai.").map((suggestion) => suggestion.insertText)).toContain("openai.max");
+    const profileSuggestions = routingEditorSuggestions(suggestions, "openai.").map((suggestion) => suggestion.insertText);
+    expect(profileSuggestions).toContain("openai.max");
+    expect(profileSuggestions).not.toContain("openai.ensemble");
   });
 
   it("keeps OpenRouter suggestions closed for completed explicit models", () => {

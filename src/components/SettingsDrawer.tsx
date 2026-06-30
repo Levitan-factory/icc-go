@@ -577,11 +577,11 @@ export function SettingsDrawer({
                     </div>
                     {provider.provider === "openrouter" && (
                       <p className="settings-note">
-                        OpenRouter native routes: <code>openrouter/auto</code> for <code>.max</code> and{" "}
-                        <code>openrouter/fusion</code> for <code>.ensemble</code>. Explicit model ids such as{" "}
-                        <code>anthropic/claude-sonnet-4.6</code> or <code>deepseek/deepseek-chat:free</code> are valid.
-                        Use <code>&gt; openrouter:anthropic/claude-sonnet-4.6</code> for an explicit model through
-                        OpenRouter; <code>openrouter.openai.max</code> is not ICC syntax.
+                        OpenRouter native routes can use model ids such as <code>openrouter/auto</code>,{" "}
+                        <code>anthropic/claude-sonnet-4.6</code>, or <code>deepseek/deepseek-chat:free</code>. Use{" "}
+                        <code>&gt; openrouter:anthropic/claude-sonnet-4.6</code> for an explicit model through
+                        OpenRouter. Group <code>.ensemble</code> is configured under Orchestration;{" "}
+                        <code>openrouter.ensemble</code> and <code>openrouter.openai.max</code> are not ICC syntax.
                       </p>
                     )}
                     {modelRefreshes[provider.id] && (

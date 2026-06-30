@@ -60,15 +60,15 @@ This page covers notebook-level controls, menus, shortcuts, and exports.
 - The default Anthropic key can keep alias `claude`, because Claude is the model family. Example: a DeepSeek key can be named `chinese` and called as `> (claude + chinese).best`.
 - `Check only` validates the pasted key and, where available, pulls a live balance. It does not link the key. Use `Bind key` to save the masked local reference and the last verified balance.
 - OpenRouter is supported as a single-key multi-model provider. The OpenRouter alias names the key, and the model id after `:` names the model inside OpenRouter.
-- Routing rule: alias selects the key, `:` selects a concrete model id inside that key, and `.` selects an ICC profile such as `.max`, `.ensemble`, `.fast`, or `.code`.
+- Routing rule: alias selects the key, `:` selects a concrete model id inside that key, and `.` selects an ICC provider profile such as `.max`, `.fast`, `.cheap`, or `.code`.
 - `> openai.max` uses the saved OpenAI key and its max profile.
 - `> openrouter.max` uses the saved OpenRouter key and its max profile. The default OpenRouter max model is `openrouter/auto`.
 - `> openrouter:openai/gpt-4o` uses the saved OpenRouter key to call the OpenAI model id through OpenRouter.
 - `> openrouter:anthropic/claude-sonnet-4.5` and `> openrouter:deepseek/deepseek-chat:free` are valid explicit OpenRouter routes.
 - `> openrouter.openai.max` is not ICC syntax. Use `:` for an explicit OpenRouter model id.
 - If the OpenRouter alias is renamed to `router`, write `> router.max` or `> router:openai/gpt-4o`.
-- OpenRouter native routing can use `openrouter/auto` for `.max` and `openrouter/fusion` for `.ensemble`.
-- Settings -> Orchestration controls the selector model used by ICC-GO for `.best` groups and the ensemble model used by ICC-GO for `.ensemble` groups when routing is handled by the notebook runtime rather than a provider-native router.
+- `.ensemble` is a group orchestration mode, not a provider profile. Write `> (openai + claude).ensemble`; do not write `> openai.ensemble`.
+- OpenRouter native routing can use explicit model ids such as `openrouter:openrouter/auto`. Settings -> Orchestration controls the selector model used by ICC-GO for `.best` groups and the ensemble model used by ICC-GO for `.ensemble` groups when routing is handled by the notebook runtime.
 - If a key balance check fails or a provider reports no available balance, ICC-GO shows a notebook-level warning until the setting is corrected or rechecked.
 
 ## Maintenance Rule
