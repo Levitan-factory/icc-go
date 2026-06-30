@@ -139,8 +139,11 @@ function CatalogEntryCard({ entry }: { entry: LanguageWikiEntry }) {
         <div className="dsl-entry-section">
           <h4>Examples</h4>
           {entry.examples.map((example) => (
-            <div className="dsl-example" key={`${entry.id}-${example.label}`}>
-              <span>{example.label}</span>
+            <div
+              className={`dsl-example ${example.valid === false ? "invalid" : ""}`}
+              key={`${entry.id}-${example.label}`}
+            >
+              <span>{example.valid === false ? `Invalid: ${example.label}` : example.label}</span>
               <pre><code>{example.code}</code></pre>
             </div>
           ))}

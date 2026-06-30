@@ -3424,6 +3424,10 @@ button.app-logo:focus-visible {
   font-weight: 600;
 }
 
+.dsl-example.invalid span {
+  color: var(--danger);
+}
+
 .dsl-example pre {
   margin: 0;
   overflow: auto;
@@ -3434,6 +3438,11 @@ button.app-logo:focus-visible {
   font-family: var(--mono);
   font-size: var(--font-sm);
   line-height: 1.55;
+}
+
+.dsl-example.invalid pre {
+  border-color: rgba(185, 28, 28, 0.24);
+  background: #fff8f7;
 }
 
 .dsl-example code {
