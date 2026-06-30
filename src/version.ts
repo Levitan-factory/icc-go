@@ -2,6 +2,7 @@ import { PUBLIC_LANGUAGE_CHANNEL } from "./language/latest";
 
 export const ICC_GO_VERSION = "0.1.11";
 export const ICC_GO_VERSION_LABEL = `v${ICC_GO_VERSION}`;
+export const ICC_GO_RELEASE_DATE = "2026-06-27";
 export const ICC_GO_RELEASE_LABEL = `ICC-GO ${ICC_GO_VERSION_LABEL}`;
 export const SUPPORTED_ICC_DSL_CHANNEL = PUBLIC_LANGUAGE_CHANNEL.channel;
 export const SUPPORTED_ICC_DSL_STABILITY = PUBLIC_LANGUAGE_CHANNEL.stability;

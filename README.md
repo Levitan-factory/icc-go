@@ -6,7 +6,7 @@ Local-first notebook for reproducible LLM workflows written as intent cells.
 
 Install: `npm install && npm run dev`
 
-Three-cell example: `c1 > @forward c2`, `c2` reads `%from c1`, `c3` writes `@file -markdown strategy.md`.
+Three-cell example: `c1` drafts a product spec, `c2` critiques it with `%from c1`, and `c3` exports `final_spec.md`.
 Why this exists: chat is transient; ICC-GO is reproducible; cells are inspectable; outputs become addressable artifacts; local-first, BYOK.
 
 ## Quick Start
@@ -20,18 +20,27 @@ npm run dev
 
 ```icc
 # c1
-> (openai + claude).best
+> openai.max
 @forward c2
-Find a realistic HFT hypothesis for Binance USDM.
+@text <700
+
+Draft a product spec for a lightweight issue triage assistant.
+Include target users, core workflow, data boundaries, and non-goals.
 
 # c2
 > claude.max
-Review %from c1 and return the strongest version.
+@forward c3
+@text <600
+
+Critique %from c1.
+Identify missing requirements, ambiguous scope, privacy risks, and launch blockers.
 
 # c3
-> openai
-@file -markdown strategy.md
-Package %from c2.
+> openrouter:openrouter/auto
+@file -markdown final_spec.md
+
+Rewrite the product spec using %from c1 and %from c2.
+Produce a concise Markdown file with assumptions, user flows, acceptance criteria, and open questions.
 ```
 
 ## Why Not Just Use ChatGPT, Claude, or Cursor?
@@ -51,6 +60,22 @@ Ready-to-read ICC notebooks live in [examples](examples):
 - [code_generation_to_files.icc](examples/code_generation_to_files.icc)
 - [hft_strategy_branching.icc](examples/hft_strategy_branching.icc)
 - [image_and_markdown_artifacts.icc](examples/image_and_markdown_artifacts.icc)
+
+## Roadmap
+
+Now:
+
+- Local-first notebook workspace.
+- ICC DSL v1.04.
+- Provider keys and alias routing.
+- Generated artifacts and addressable references.
+
+Next:
+
+- Connector cells for external tools and data.
+- Durable artifact storage.
+- Migration tool for older ICC syntax.
+- Domain packs with reusable examples and checks.
 
 ## Intent-Cell Coding
 

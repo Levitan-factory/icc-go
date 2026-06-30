@@ -31,10 +31,10 @@ function createNotebook(): Notebook {
 
   return {
     id: createId("notebook"),
-    title: "Trading hypothesis workflow",
-    description: "Compare, evaluate, and branch from LLM outputs.",
+    title: "Product spec workflow",
+    description: "Draft, critique, and export a product spec from reusable intent cells.",
     metadata: createNotebookMetadata(timestamp),
-    cellAliasCounter: 5,
+    cellAliasCounter: 4,
     snapshots: [],
     viewState: {
       mode: "expanded",
@@ -50,27 +50,21 @@ function createNotebook(): Notebook {
     cells: [
       createCell(
         "c1",
-        "Generate candidate",
-        "> (openai + claude).best\n< cost <= $3.33\n< latency <= 3m\n@forward c2",
-        "Find a realistic HFT hypothesis for Binance USDM.\nAccount for fees, latency, fill probability, adverse selection, and overfit risk.",
+        "Draft product spec",
+        "> openai.max\n@forward c2\n@text <700",
+        "Draft a product spec for a lightweight issue triage assistant.\nInclude target users, core workflow, data boundaries, and non-goals.",
       ),
       createCell(
         "c2",
-        "Evaluate PnL",
-        "> openai.max\n@if pnl > 0 -> c3\n@else -> c4",
-        'Analyze the hypothesis from %from c1.\nReturn final answer as JSON with numeric "pnl" and short "reason" keys.',
+        "Critique spec",
+        "> claude.max\n@forward c3\n@text <600",
+        "Critique %from c1.\nIdentify missing requirements, ambiguous scope, privacy risks, and launch blockers.",
       ),
       createCell(
         "c3",
-        "Write strategy code",
-        "> claude.max\n< tokens <= 50000\n@file -python strategy_code.py\n@text <300",
-        "Write strategy code for the accepted hypothesis.\n\nInput:\n%from c2",
-      ),
-      createCell(
-        "c4",
-        "Close hypothesis",
-        "> openai\n@file -markdown closeout_note.md\n@text <100",
-        "Create a short markdown closeout note explaining why the hypothesis did not pass.\n\nData:\n%from c2",
+        "Export final spec",
+        "> openrouter:openrouter/auto\n@file -markdown final_spec.md",
+        "Rewrite the product spec using %from c1 and %from c2.\nProduce a concise Markdown file with assumptions, user flows, acceptance criteria, and open questions.",
       ),
     ],
   };

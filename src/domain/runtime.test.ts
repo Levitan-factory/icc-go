@@ -28,7 +28,8 @@ describe("runtime simulation", () => {
 
     expect(result.run.inputResolved).toBe("%from c1");
     expect(result.run.textOutputRaw).not.toContain("Simulated provider run.");
-    expect(result.run.textOutputRaw).toContain("pnl = -15.2");
+    expect(result.run.textOutputRaw).toContain("Compiled prompt for c2");
+    expect(result.run.textOutputRaw).toContain("Route: claude.max");
     expect(result.output).toContain("Simulated provider run.");
     expect(result.run.textOutputRaw).not.toBe(sourceOutput);
     expect(result.output).not.toBe(sourceOutput);
