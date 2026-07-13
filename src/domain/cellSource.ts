@@ -3,7 +3,7 @@ export interface SplitCellSource {
   promptBody: string;
 }
 
-export type ServiceLineClass = "route" | "constraint" | "directive" | "escaped" | "body";
+export type ServiceLineClass = "route" | "constraint" | "directive" | "reference" | "escaped" | "body";
 
 export function combineCellSource(controlHeader: string, promptBody: string): string {
   const header = controlHeader.trimEnd();
@@ -47,6 +47,7 @@ export function serviceLineClass(line: string): ServiceLineClass {
   if (trimmed.startsWith(">")) return "route";
   if (trimmed.startsWith("<")) return "constraint";
   if (knownDirectiveLine(trimmed) || directiveDraftLine(trimmed)) return "directive";
+  if (knownReferenceLine(trimmed) || referenceDraftLine(trimmed)) return "reference";
   if (escapedServiceLine(trimmed)) return "escaped";
   return "body";
 }
@@ -58,6 +59,8 @@ function isServiceLine(line: string): boolean {
     trimmed.startsWith("<") ||
     knownDirectiveLine(trimmed) ||
     directiveDraftLine(trimmed) ||
+    knownReferenceLine(trimmed) ||
+    referenceDraftLine(trimmed) ||
     escapedServiceLine(trimmed)
   );
 }
@@ -73,6 +76,19 @@ function directiveDraftLine(trimmed: string): boolean {
   return command === "" || knownCommands.some((knownCommand) => knownCommand.startsWith(command));
 }
 
+function knownReferenceLine(trimmed: string): boolean {
+  return /^%(?:from\s+[cC][0-9]+(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)*|input|file\.[cC][0-9]+(?::[^\s%,.?!;:]+(?:\.[^\s%,.?!;:]+)*)?|files\.[cC][0-9]+|prompt\.[cC][0-9]+|header\.[cC][0-9]+|meta\.[cC][0-9]+\.[a-zA-Z_][a-zA-Z0-9_]*|error\.[cC][0-9]+(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)*)$/.test(
+    trimmed,
+  );
+}
+
+function referenceDraftLine(trimmed: string): boolean {
+  const command = trimmed.match(/^%([a-zA-Z.]*)$/)?.[1].toLowerCase();
+  if (command === undefined) return false;
+  const knownReferences = ["from", "input", "file", "files", "prompt", "header", "meta", "error"];
+  return command === "" || knownReferences.some((knownReference) => knownReference.startsWith(command));
+}
+
 function escapedServiceLine(trimmed: string): boolean {
-  return /^\\[><@]/.test(trimmed);
+  return /^\\[><@%]/.test(trimmed);
 }

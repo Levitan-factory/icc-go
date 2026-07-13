@@ -1,0 +1,22 @@
+# c1
+> (openai + claude).best
+@forward c2
+@text <700
+
+Compare three apartments in Valencia for a household with EUR 80,000 available upfront and a maximum total housing payment of EUR 2,200 per month.
+Estimate a fair purchase-price range, flag legal and building risks, and list facts that require professional verification.
+
+# c2
+> openai.reasoning
+@forward c3
+@text <900
+
+Using %from c1, estimate conservative, base, and optimistic resale values after 5 and 10 years.
+Include purchase taxes, selling costs, renovation, maintenance, and inflation assumptions.
+
+# c3
+> auto
+@file -markdown apartment_decision.md
+
+Use %from c1 and %from c2 to write a practical buy / renegotiate / reject recommendation.
+Keep assumptions separate from facts that require verification.

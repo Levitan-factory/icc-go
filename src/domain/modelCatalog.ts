@@ -1,5 +1,6 @@
 import type { ProviderKind, ProviderSettings } from "./types";
 import {
+  autoModelProfileChoiceLabel,
   fallbackProviderModelCatalog,
   modelCatalogForProvider,
   normalizeKnownModelAlias,
@@ -49,11 +50,6 @@ export const openRouterFamilies: OpenRouterFamily[] = [
     id: "openai",
     label: "OpenAI",
     models: [
-      { label: "GPT-5.5", value: "openai/gpt-5.5" },
-      { label: "GPT-5.5 Pro", value: "openai/gpt-5.5-pro" },
-      { label: "GPT-5.4 mini", value: "openai/gpt-5.4-mini" },
-      { label: "GPT-5.4 nano", value: "openai/gpt-5.4-nano" },
-      { label: "GPT-5.3 Codex", value: "openai/gpt-5.3-codex" },
       { label: "GPT-4o", value: "openai/gpt-4o" },
       { label: "GPT-4o mini", value: "openai/gpt-4o-mini" },
     ],
@@ -62,9 +58,8 @@ export const openRouterFamilies: OpenRouterFamily[] = [
     id: "anthropic",
     label: "Anthropic",
     models: [
-      { label: "Claude Opus 4.8", value: "anthropic/claude-opus-4.8" },
-      { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4.6" },
-      { label: "Claude Haiku 4.5", value: "anthropic/claude-haiku-4-5-20251001" },
+      { label: "Claude Sonnet latest", value: "~anthropic/claude-sonnet-latest" },
+      { label: "Claude 3 Haiku", value: "~anthropic/claude-haiku-latest" },
     ],
   },
   {
@@ -98,7 +93,7 @@ export const openRouterFamilies: OpenRouterFamily[] = [
     label: "xAI",
     models: [
       { label: "Grok 4", value: "x-ai/grok-4" },
-      { label: "Grok 4 mini", value: "x-ai/grok-4-mini" },
+      { label: "Grok 3 mini", value: "x-ai/grok-3-mini" },
     ],
   },
   {
@@ -117,7 +112,7 @@ export function modelChoicesForProviderSettings(provider: ProviderSettings): Mod
   const profileChoices = modelProfileFields
     .map(([, field]) => provider[field])
     .filter((value): value is string => Boolean(value?.trim()))
-    .map((value) => ({ label: value, value }));
+    .map((value) => ({ label: autoModelProfileChoiceLabel(value) ?? value, value }));
 
   return uniqueModelChoices([...modelCatalogForProvider(provider), ...profileChoices]);
 }

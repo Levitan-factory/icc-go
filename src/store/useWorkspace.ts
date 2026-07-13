@@ -6,6 +6,7 @@ import { createNotebookMetadata, normalizeNotebookMetadata } from "../domain/not
 import { executeCellRun } from "../domain/providerExecution";
 import { deleteProviderSecret, readProviderSecret } from "../domain/providerSecrets";
 import { clearVisibleCellOutput } from "../domain/outputRetention";
+import { runningDeleteWarning, runningIntentCellIdsForNotebook } from "../domain/runState";
 import {
   buildNotebookExport,
   buildNotebookMarkdown,
@@ -61,6 +62,7 @@ export function useWorkspace() {
   const workspaceRef = useRef(workspace);
   const undoStackRef = useRef<Notebook[]>([]);
   const redoStackRef = useRef<Notebook[]>([]);
+  const modelCatalogRefreshInFlightRef = useRef<Record<string, Promise<Partial<ProviderSettings> | undefined>>>({});
 
   useEffect(() => {
     workspaceRef.current = workspace;
@@ -68,53 +70,12 @@ export function useWorkspace() {
 
   useEffect(() => {
     let cancelled = false;
-    const inFlight = new Set<string>();
-
-    async function refreshProvider(provider: ProviderSettings) {
-      if (inFlight.has(provider.id)) return;
-      const secret = readProviderSecret(provider.id);
-      if (!secret && provider.provider !== "openrouter") return;
-
-      inFlight.add(provider.id);
-      try {
-        const refresh = await refreshProviderModelCatalog(provider, secret || undefined);
-        if (cancelled) return;
-
-        const choices = uniqueRegistryModelChoices(refresh.choices);
-        const patch: Partial<ProviderSettings> = {
-          modelCatalog: choices,
-          modelCatalogUpdatedAt: refresh.fetchedAt,
-          modelCatalogSource: refresh.source,
-          defaultModel: chooseAutoModelForProvider(provider.provider, choices, "default", provider.defaultModel),
-          maxModel: chooseAutoModelForProvider(provider.provider, choices, "max", provider.maxModel),
-          ensembleModel: chooseAutoModelForProvider(provider.provider, choices, "ensemble", provider.ensembleModel),
-          cheapModel: chooseAutoModelForProvider(provider.provider, choices, "cheap", provider.cheapModel),
-          fastModel: chooseAutoModelForProvider(provider.provider, choices, "fast", provider.fastModel),
-          codeModel: chooseAutoModelForProvider(provider.provider, choices, "code", provider.codeModel),
-        };
-        if (provider.imageModel) {
-          patch.imageModel = chooseAutoModelForProvider(provider.provider, choices, "image", provider.imageModel);
-        }
-
-        setWorkspace((current) => ({
-          ...current,
-          settings: {
-            ...current.settings,
-            providers: current.settings.providers.map((candidate) =>
-              candidate.id === provider.id ? normalizeProviderSettings({ ...candidate, ...patch }) : candidate,
-            ),
-          },
-        }));
-      } catch {
-        // Keep the editor deterministic even when a provider catalog API is unavailable.
-      } finally {
-        inFlight.delete(provider.id);
-      }
-    }
 
     function refreshStaleCatalogs() {
       workspaceRef.current.settings.providers.filter(shouldRefreshProviderModels).forEach((provider) => {
-        void refreshProvider(provider);
+        void refreshProviderCatalog(provider).then((patch) => {
+          if (!cancelled && patch) applyProviderCatalogPatches([{ providerId: provider.id, patch }]);
+        });
       });
     }
 
@@ -227,10 +188,11 @@ export function useWorkspace() {
   }
 
   function deleteProject(projectId: string) {
-    setWorkspace((current) => {
-      const target = current.projects.find((project) => project.id === projectId);
-      if (!target) return current;
+    const target = workspaceRef.current.projects.find((project) => project.id === projectId);
+    if (!target) return;
+    cancelRunsForCellIds(target.notebooks.flatMap((notebook) => notebook.cells.filter(isIntentCell).map((cell) => cell.id)));
 
+    setWorkspace((current) => {
       const remaining = current.projects.filter((project) => project.id !== projectId);
       const fallbackProject =
         remaining[0] ??
@@ -460,6 +422,8 @@ export function useWorkspace() {
       if (!shouldDelete) return;
     }
 
+    cancelRunsForCellIds([cellId]);
+
     setWorkspace((current) =>
       withHistory(current, (historyWorkspace) =>
       updateActiveNotebook(historyWorkspace, (currentNotebook) => {
@@ -517,6 +481,13 @@ export function useWorkspace() {
   }
 
   async function executeWorkspaceCell(cellId: string, controller: AbortController) {
+    await ensureFreshProviderCatalogsBeforeRun();
+    if (controller.signal.aborted) {
+      finishRunningCell(cellId);
+      delete runAbortRef.current[cellId];
+      return;
+    }
+
     const latestWorkspace = workspaceRef.current;
     const currentNotebook = getActiveNotebook(latestWorkspace);
     const currentCell = currentNotebook?.cells.find((candidate) => candidate.id === cellId);
@@ -556,7 +527,7 @@ export function useWorkspace() {
         parseOptions(notebookForResult, workspaceForResult),
       );
       const nextNotebook = applyRunResult(notebookForResult, cellForResult.id, parsedForResult, result);
-      autorunTargetId = result.status === "completed" ? findAutorunTargetId(nextNotebook, parsedForResult) : undefined;
+      autorunTargetId = result.status === "completed" ? findAutorunTargetId(nextNotebook, parsedForResult, result) : undefined;
 
       return replaceActiveNotebook(workspaceForResult, nextNotebook);
     });
@@ -568,6 +539,77 @@ export function useWorkspace() {
       const targetId = autorunTargetId;
       window.setTimeout(() => runCell(targetId), 0);
     }
+  }
+
+  async function ensureFreshProviderCatalogsBeforeRun() {
+    const providers = workspaceRef.current.settings.providers.filter(shouldRefreshProviderModels);
+    if (!providers.length) return;
+
+    const patches = (
+      await Promise.all(
+        providers.map(async (provider) => {
+          try {
+            const patch = await refreshProviderCatalog(provider);
+            return patch ? { providerId: provider.id, patch } : undefined;
+          } catch {
+            return undefined;
+          }
+        }),
+      )
+    ).filter((patch): patch is { providerId: string; patch: Partial<ProviderSettings> } => Boolean(patch));
+
+    applyProviderCatalogPatches(patches);
+  }
+
+  async function refreshProviderCatalog(provider: ProviderSettings): Promise<Partial<ProviderSettings> | undefined> {
+    const existing = modelCatalogRefreshInFlightRef.current[provider.id];
+    if (existing) return existing;
+
+    const promise = refreshProviderCatalogNow(provider).finally(() => {
+      delete modelCatalogRefreshInFlightRef.current[provider.id];
+    });
+    modelCatalogRefreshInFlightRef.current[provider.id] = promise;
+    return promise;
+  }
+
+  async function refreshProviderCatalogNow(provider: ProviderSettings): Promise<Partial<ProviderSettings> | undefined> {
+    const secret = readProviderSecret(provider.id);
+    if (!secret && provider.provider !== "openrouter") return undefined;
+
+    const refresh = await refreshProviderModelCatalog(provider, secret || undefined);
+    const choices = uniqueRegistryModelChoices(refresh.choices);
+    const patch: Partial<ProviderSettings> = {
+      modelCatalog: choices,
+      modelCatalogUpdatedAt: refresh.fetchedAt,
+      modelCatalogSource: refresh.source,
+      defaultModel: chooseAutoModelForProvider(provider.provider, choices, "default", provider.defaultModel),
+      maxModel: chooseAutoModelForProvider(provider.provider, choices, "max", provider.maxModel),
+      ensembleModel: chooseAutoModelForProvider(provider.provider, choices, "ensemble", provider.ensembleModel),
+      cheapModel: chooseAutoModelForProvider(provider.provider, choices, "cheap", provider.cheapModel),
+      fastModel: chooseAutoModelForProvider(provider.provider, choices, "fast", provider.fastModel),
+      codeModel: chooseAutoModelForProvider(provider.provider, choices, "code", provider.codeModel),
+    };
+    if (provider.imageModel) {
+      patch.imageModel = chooseAutoModelForProvider(provider.provider, choices, "image", provider.imageModel);
+    }
+    return patch;
+  }
+
+  function applyProviderCatalogPatches(patches: Array<{ providerId: string; patch: Partial<ProviderSettings> }>) {
+    if (!patches.length) return;
+    const patchByProvider = new Map(patches.map((patch) => [patch.providerId, patch.patch]));
+    const nextWorkspace: WorkspaceState = {
+      ...workspaceRef.current,
+      settings: {
+        ...workspaceRef.current.settings,
+        providers: workspaceRef.current.settings.providers.map((provider) => {
+          const patch = patchByProvider.get(provider.id);
+          return patch ? normalizeProviderSettings({ ...provider, ...patch }) : provider;
+        }),
+      },
+    };
+    workspaceRef.current = nextWorkspace;
+    setWorkspace(nextWorkspace);
   }
 
   function finishRunningCell(cellId: string) {
@@ -583,16 +625,35 @@ export function useWorkspace() {
   }
 
   function stopCell(cellId: string) {
-    const timer = runTimersRef.current[cellId];
-    if (timer) {
-      window.clearTimeout(timer);
-      delete runTimersRef.current[cellId];
-    }
-    runAbortRef.current[cellId]?.abort();
-    delete runAbortRef.current[cellId];
-
+    cancelRunsForCellIds([cellId]);
     finishRunningCell(cellId);
     updateCellStatus(cellId, "cancelled");
+  }
+
+  function cancelRunsForCellIds(cellIds: string[]) {
+    if (!cellIds.length) return;
+    const ids = new Set(cellIds);
+
+    ids.forEach((cellId) => {
+      const timer = runTimersRef.current[cellId];
+      if (timer) {
+        window.clearTimeout(timer);
+        delete runTimersRef.current[cellId];
+      }
+      runAbortRef.current[cellId]?.abort();
+      delete runAbortRef.current[cellId];
+    });
+
+    setRunningCellIds((current) => {
+      if (![...ids].some((id) => current.has(id))) return current;
+      const next = new Set(current);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  }
+
+  function effectiveRunningCellIds() {
+    return new Set([...runningCellIds, ...Object.keys(runAbortRef.current)]);
   }
 
   function stopAllRuns() {
@@ -700,12 +761,19 @@ export function useWorkspace() {
     );
     const notebook = project?.notebooks.find((candidate) => candidate.id === notebookId);
     if (!project || !notebook) return;
+    const runningIds = runningIntentCellIdsForNotebook(notebook, effectiveRunningCellIds());
     if (options.confirm !== false) {
+      const runningWarning = runningDeleteWarning(runningIds.length, "notebook");
       const confirmed = window.confirm(
-        `Delete notebook "${notebook.title}"? This action can be undone only if a snapshot or export exists.`,
+        [
+          `Delete notebook "${notebook.title}"? This action can be undone only if a snapshot or export exists.`,
+          runningWarning,
+        ].filter(Boolean).join("\n\n"),
       );
       if (!confirmed) return;
     }
+
+    cancelRunsForCellIds(runningIds);
 
     setWorkspace((current) => {
       const sourceProject = current.projects.find((candidate) => candidate.id === project.id);
@@ -1376,12 +1444,18 @@ function applyRunResult(
   });
 
   const resultNotebook = { ...notebook, cells, updatedAt: nowIso() };
-  return parsed.flow.type === "forward"
-    ? (parsed.flow.targets ?? [parsed.flow.target]).reduce(
-        (currentNotebook, targetAlias) => markTargetReady(currentNotebook, targetAlias),
-        resultNotebook,
-      )
-    : resultNotebook;
+  if (parsed.flow.type === "forward") {
+    return (parsed.flow.targets ?? [parsed.flow.target]).reduce(
+      (currentNotebook, targetAlias) => markTargetReady(currentNotebook, targetAlias),
+      resultNotebook,
+    );
+  }
+
+  if (parsed.flow.type === "if" && simulated.decision?.routeTarget) {
+    return markTargetReady(resultNotebook, simulated.decision.routeTarget);
+  }
+
+  return resultNotebook;
 }
 
 function markTargetReady(notebook: Notebook, targetAlias: string): Notebook {
@@ -1395,10 +1469,20 @@ function markTargetReady(notebook: Notebook, targetAlias: string): Notebook {
   };
 }
 
-function findAutorunTargetId(notebook: Notebook, parsed: ReturnType<typeof parseCellDsl>): string | undefined {
+function findAutorunTargetId(
+  notebook: Notebook,
+  parsed: ReturnType<typeof parseCellDsl>,
+  result?: CellRunResult,
+): string | undefined {
   const flow = parsed.flow;
   if (flow.type === "forward") {
     return notebook.cells.find((cell) => isIntentCell(cell) && cell.alias === flow.target)?.id;
+  }
+
+  if (flow.type === "if") {
+    const target = result?.decision?.routeTarget;
+    if (!target || target === "stop" || target === "done") return undefined;
+    return notebook.cells.find((cell) => isIntentCell(cell) && cell.alias === target)?.id;
   }
 
   return undefined;

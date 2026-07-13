@@ -6,7 +6,7 @@ interface AppLogoProps {
   subtitle?: string;
 }
 
-export function AppLogo({ className = "", onClick, subtitle = `Beta · ${ICC_GO_VERSION_LABEL}` }: AppLogoProps) {
+export function AppLogo({ className = "", onClick, subtitle = ICC_GO_VERSION_LABEL }: AppLogoProps) {
   const classes = ["app-logo", className].filter(Boolean).join(" ");
   const label = subtitle ? `ICC-GO ${subtitle}` : "ICC-GO";
   const content = (

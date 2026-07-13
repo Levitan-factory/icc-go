@@ -47,7 +47,7 @@ describe("parseCellDsl", () => {
           id: "provider_openrouter",
           alias: "openrouter",
           label: "OpenRouter",
-          models: ["openrouter/auto", "openai/gpt-5.5", "anthropic/claude-sonnet-4.5"],
+          models: ["openrouter/auto", "openai/gpt-4o", "~anthropic/claude-sonnet-latest"],
         },
       ],
     });

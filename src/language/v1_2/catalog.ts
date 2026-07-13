@@ -108,7 +108,7 @@ export const dslCatalogEntries: DslCatalogEntry[] = [
     syntax: ["> <provider>", "> <provider>:<model>", "> <provider>.<profile>", "> auto"],
     examples: [
       { label: "Default provider model", code: "> openai" },
-      { label: "Explicit model", code: "> claude:claude-sonnet-4-6" },
+      { label: "Explicit model", code: "> claude:claude-sonnet-latest" },
       { label: "Workspace profile", code: "> claude.max" },
       { label: "OpenRouter model id", code: "> router:deepseek/deepseek-chat:free" },
     ],
@@ -149,7 +149,7 @@ export const dslCatalogEntries: DslCatalogEntry[] = [
     summary: "Pins a provider call to a model id instead of using a workspace profile.",
     syntax: ["> <provider>:<model>"],
     examples: [
-      { label: "OpenAI model", code: "> openai:gpt-5.5" },
+      { label: "OpenAI model", code: "> openai:gpt-4o" },
       { label: "Gemini model", code: "> gemini:gemini-2.5-pro" },
     ],
     notes: ["Model availability is a workspace/provider adapter concern."],

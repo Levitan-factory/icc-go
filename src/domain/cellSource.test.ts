@@ -45,6 +45,15 @@ describe("unified cell source", () => {
     expect(serviceLineClass("@fo")).toBe("directive");
     expect(serviceLineClass("@text")).toBe("directive");
     expect(serviceLineClass("@forward! c2")).toBe("directive");
+    expect(serviceLineClass("%from c1")).toBe("reference");
+  });
+
+  it("keeps leading percent references inside the editable service block", () => {
+    expect(getLeadingHeaderEndLine("> claude.max\n%from c1\n@forward c3\nFind gaps.")).toBe(3);
+    expect(splitUnifiedCellSource("> claude.max\n%from c1\n@forward c3\nFind gaps.")).toEqual({
+      controlHeader: "> claude.max\n%from c1\n@forward c3",
+      promptBody: "Find gaps.",
+    });
   });
 
   it("does not treat unknown @ words as header directives", () => {
@@ -67,5 +76,7 @@ describe("unified cell source", () => {
         promptBody: "Body",
       });
     }
+
+    expect(serviceLineClass("\\%from c1")).toBe("escaped");
   });
 });

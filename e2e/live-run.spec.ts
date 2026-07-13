@@ -4,6 +4,9 @@ import { createInitialWorkspace } from "../src/domain/fixtures";
 test("cell run shows a loader, calls the provider adapter, and renders the live result", async ({ page }) => {
   const workspace = createInitialWorkspace();
   workspace.settings.providers[0].apiKeyMasked = "sk-proj-...test";
+  workspace.settings.providers[0].modelCatalog = [{ label: "GPT-4o", value: "gpt-4o" }];
+  workspace.settings.providers[0].modelCatalogUpdatedAt = "2026-07-07T00:00:00.000Z";
+  workspace.settings.providers[0].modelCatalogSource = "provider-api";
 
   await page.addInitScript((workspaceJson) => {
     window.localStorage.setItem("icc-go.workspace.v1.2", workspaceJson);

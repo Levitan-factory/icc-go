@@ -39,7 +39,7 @@ function runRecord(): RunRecord {
     tokensIn: 10,
     tokensOut: 20,
     summary: "Old text output",
-    providerRuns: [{ provider: "OpenAI", model: "gpt-5.5", status: "completed" }],
+    providerRuns: [{ provider: "OpenAI", model: "gpt-4o", status: "completed" }],
     inputResolved: "",
     textOutputRaw: "Old model answer",
     textOutputVisible: "Old model answer",

@@ -1,0 +1,22 @@
+# c1
+> openai.code
+@forward c2
+@text <800
+
+Review the attached diff as a senior engineer.
+Focus on correctness, missing tests, security, and unclear ownership boundaries.
+
+# c2
+> claude.max
+@forward c3
+@text <700
+
+Use %from c1 to turn the review into a prioritized action plan.
+Group findings by severity and include exact follow-up tests.
+
+# c3
+> auto
+@file -markdown review_report.md
+
+Write the final code review report from %from c1 and %from c2.
+Use concise sections: summary, blocking issues, follow-ups, and test plan.

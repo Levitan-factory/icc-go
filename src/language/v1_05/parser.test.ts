@@ -23,6 +23,31 @@ describe("parseCellDsl", () => {
     expect(parsed.diagnostics.filter((diagnostic) => diagnostic.level === "error")).toHaveLength(0);
   });
 
+  it("allows forward targets to be planned before the target cell exists", () => {
+    const parsed = parseCellDsl("> openai.max\n@forward c2", "Write first version.", {
+      ...options,
+      knownAliases: ["c1"],
+    });
+
+    expect(parsed.flow).toEqual({ type: "forward", target: "c2", targets: ["c2"], autorun: true });
+    expect(parsed.diagnostics.filter((diagnostic) => diagnostic.level === "error")).toHaveLength(0);
+    expect(parsed.diagnostics).toContainEqual({
+      level: "warning",
+      code: "forward_target_pending",
+      message: "Forward target `c2` does not exist yet. Create c2 before running this flow.",
+    });
+    expect(parsed.chips).not.toContain("header error");
+  });
+
+  it("parses leading percent references without ending the control header", () => {
+    const parsed = parseCellDsl("> claude.max\n%from c1\n@forward c3", "Find gaps.", options);
+
+    expect(parsed.references.map((reference) => reference.raw)).toEqual(["%from c1"]);
+    expect(parsed.flow).toEqual({ type: "forward", target: "c3", targets: ["c3"], autorun: true });
+    expect(parsed.diagnostics.some((diagnostic) => diagnostic.message.includes("Control header lines should"))).toBe(false);
+    expect(parsed.diagnostics.filter((diagnostic) => diagnostic.level === "error")).toHaveLength(0);
+  });
+
   it("rejects multiple routing lines in one cell", () => {
     const parsed = parseCellDsl(
       "> (openai + claude).best\n> openrouter:openai/gpt-image-1\n@forward c2",
@@ -137,7 +162,7 @@ describe("parseCellDsl", () => {
           id: "provider_openrouter",
           alias: "openrouter",
           label: "OpenRouter",
-          models: ["openrouter/auto", "openai/gpt-5.5", "anthropic/claude-sonnet-4.5"],
+          models: ["openrouter/auto", "openai/gpt-4o", "~anthropic/claude-sonnet-latest"],
         },
       ],
     });

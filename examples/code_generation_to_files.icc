@@ -25,6 +25,8 @@ Return the requested file as an artifact section:
 
 Create a focused pytest suite for the validator produced in %from c1.
 Cover valid notebooks, duplicate routing lines, missing references, and empty cells.
+Return the requested file as an artifact section:
+--- file: validator_test.py ---
 
 # c4
 > claude.max
@@ -32,3 +34,5 @@ Cover valid notebooks, duplicate routing lines, missing references, and empty ce
 
 Review %from c1, %from c2, and %from c3 as if this were a pull request.
 List the implementation risks and any missing tests.
+Return the requested file as an artifact section:
+--- file: release_patch.md ---

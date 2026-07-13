@@ -3,11 +3,15 @@ import { parseCellDsl } from "../language/latest";
 import { splitUnifiedCellSource } from "./cellSource";
 
 const requiredExamples = [
-  "multi_model_hypothesis.icc",
-  "contract_review_with_notes.icc",
+  "choose_apartment.icc",
   "code_generation_to_files.icc",
+  "code_review_to_file.icc",
+  "contract_review_with_notes.icc",
   "hft_strategy_branching.icc",
   "image_and_markdown_artifacts.icc",
+  "multi_model_hypothesis.icc",
+  "product_spec_review.icc",
+  "trading_hypothesis_validation.icc",
 ];
 const exampleModules = import.meta.glob("../../examples/*.icc", {
   eager: true,
@@ -28,14 +32,14 @@ const providerAliases = [
     alias: "claude",
     label: "Claude",
     provider: "anthropic",
-    models: ["claude-sonnet-4-6", "claude-opus-4-6"],
+    models: ["claude-sonnet-latest", "claude-sonnet-latest"],
   },
   {
     id: "provider_openrouter",
     alias: "openrouter",
     label: "OpenRouter",
     provider: "openrouter",
-    models: ["openrouter/auto", "openai/gpt-image-1", "openai/gpt-4o", "anthropic/claude-sonnet-4.5"],
+    models: ["openrouter/auto", "openai/gpt-image-1", "openai/gpt-4o", "~anthropic/claude-sonnet-latest"],
   },
 ];
 

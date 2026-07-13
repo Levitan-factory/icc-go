@@ -1,0 +1,22 @@
+# c1
+> openai.max
+@forward c2
+@text <700
+
+Draft a product spec for a lightweight issue triage assistant.
+Include target users, core workflow, data boundaries, launch scope, and explicit non-goals.
+
+# c2
+> claude.max
+@forward c3
+@text <650
+
+Critique %from c1 as a product, privacy, and engineering reviewer.
+Find unclear requirements, missing edge cases, data-retention risks, and release blockers.
+
+# c3
+> auto
+@file -markdown final_spec.md
+
+Rewrite the final spec using %from c1 and %from c2.
+Produce a concise Markdown file with assumptions, user flows, acceptance criteria, open questions, and a release checklist.

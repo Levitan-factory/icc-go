@@ -140,15 +140,15 @@ function liveWorkspace(): WorkspaceState {
 
   const openAi = workspace.settings.providers.find((provider) => provider.provider === "openai");
   if (openAi) {
-    openAi.defaultModel = "gpt-5.4-mini";
-    openAi.fastModel = "gpt-5.4-nano";
-    openAi.cheapModel = "gpt-5.4-nano";
+    openAi.defaultModel = "gpt-4o-mini";
+    openAi.fastModel = "gpt-4o-mini";
+    openAi.cheapModel = "gpt-4o-mini";
     openAi.imageModel = "gpt-image-1";
   }
 
-  workspace.settings.orchestration.selectorModel = envForProvider("openai") ? "openai:gpt-5.4-mini" : "openrouter:openrouter/auto";
+  workspace.settings.orchestration.selectorModel = envForProvider("openai") ? "openai:gpt-4o-mini" : "openrouter:openrouter/auto";
   workspace.settings.orchestration.synthesisModel = envForProvider("anthropic")
-    ? "claude:claude-sonnet-4-6"
+    ? "claude:claude-sonnet-latest"
     : "openrouter:openrouter/fusion";
   workspace.settings.orchestration.evaluatorModel = workspace.settings.orchestration.selectorModel;
 

@@ -17,8 +17,17 @@ import type { CellViewMode, Notebook, SaveStatus } from "../domain/types";
 import { ICC_GO_RELEASE_LABEL, SUPPORTED_ICC_DSL_VERSION_LABEL } from "../version";
 import { AppLogo } from "./AppLogo";
 
+export type WorkspaceSurface = "visual" | "notebook" | "code";
+
+const surfaceLabels: Record<WorkspaceSurface, string> = {
+  visual: "Visual",
+  notebook: "Notebook",
+  code: "ICC Code",
+};
+
 interface WorkspaceTopBarProps {
   notebook?: Notebook;
+  surface: WorkspaceSurface;
   saveStatus: SaveStatus;
   lastSavedAt?: string;
   canUndo: boolean;
@@ -51,6 +60,7 @@ interface WorkspaceTopBarProps {
   onClearCurrentOutput: () => void;
   onClearAllOutputs: () => void;
   onSetViewMode: (mode: CellViewMode) => void;
+  onSetSurface: (surface: WorkspaceSurface) => void;
   onToggleInspector: () => void;
   onOpenSettings: () => void;
   onOpenDocs: (pageId?: string) => void;
@@ -58,6 +68,7 @@ interface WorkspaceTopBarProps {
 
 export function WorkspaceTopBar({
   notebook,
+  surface,
   saveStatus,
   lastSavedAt,
   canUndo,
@@ -90,6 +101,7 @@ export function WorkspaceTopBar({
   onClearCurrentOutput,
   onClearAllOutputs,
   onSetViewMode,
+  onSetSurface,
   onToggleInspector,
   onOpenSettings,
   onOpenDocs,
@@ -165,6 +177,9 @@ export function WorkspaceTopBar({
           <MenuButton onClick={onEstimateCost}>Estimate Cost</MenuButton>
         </Menu>
         <Menu label="View" open={openMenu === "View"} onClose={() => setOpenMenu(null)} onToggle={() => toggleMenu("View")}>
+          <MenuButton onClick={() => onSetSurface("visual")}>Visual View</MenuButton>
+          <MenuButton onClick={() => onSetSurface("notebook")}>Notebook View</MenuButton>
+          <MenuButton onClick={() => onSetSurface("code")}>ICC Code View</MenuButton>
           <MenuButton onClick={() => onSetViewMode("compact")}>Compact Mode</MenuButton>
           <MenuButton onClick={() => onSetViewMode("expanded")}>Expanded Mode</MenuButton>
           <MenuButton onClick={onToggleInspector}>{inspectorOpen ? "Hide Inspector" : "Show Inspector"}</MenuButton>
@@ -192,6 +207,21 @@ export function WorkspaceTopBar({
           </MenuButton>
         </Menu>
       </nav>
+
+      <div className="surface-switch" role="tablist" aria-label="Workspace surface">
+        {(["visual", "notebook", "code"] as const).map((target) => (
+          <button
+            key={target}
+            className={surface === target ? "is-active" : undefined}
+            type="button"
+            role="tab"
+            aria-selected={surface === target}
+            onClick={() => onSetSurface(target)}
+          >
+            {surfaceLabels[target]}
+          </button>
+        ))}
+      </div>
 
       <div className="topbar-toolbar">
         <span className={`save-status ${saveStatus}`}>
@@ -339,7 +369,7 @@ const syntaxCheatSheet = `> openai
 < latency <= 3m
 @forward c2
 @chain c1 > c2 > c3
-@if pnl > 0 -> c3
+@if confidence >= 0.75 -> c3
 @else -> c4
 @file
 @file .md

@@ -5,12 +5,18 @@ import {
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import {
+  runningDeleteWarning,
+  runningIntentCellCountForNotebook,
+  runningIntentCellCountForProject,
+} from "../domain/runState";
 import type { Notebook, Project } from "../domain/types";
 
 interface SidebarProps {
   projects: Project[];
   activeProjectId: string;
   activeNotebookId: string;
+  runningCellIds: Set<string>;
   onSelectProject: (projectId: string) => void;
   onSelectNotebook: (notebookId: string) => void;
   onCreateProject: () => void;
@@ -23,6 +29,7 @@ export function Sidebar({
   projects,
   activeProjectId,
   activeNotebookId,
+  runningCellIds,
   onSelectProject,
   onSelectNotebook,
   onCreateProject,
@@ -33,6 +40,8 @@ export function Sidebar({
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [notebookToDelete, setNotebookToDelete] = useState<Notebook | null>(null);
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  const projectRunningCount = projectToDelete ? runningIntentCellCountForProject(projectToDelete, runningCellIds) : 0;
+  const notebookRunningCount = notebookToDelete ? runningIntentCellCountForNotebook(notebookToDelete, runningCellIds) : 0;
 
   return (
     <aside className="sidebar">
@@ -104,6 +113,9 @@ export function Sidebar({
               This will delete "{projectToDelete.name}" and all notebooks inside it. This action cannot be undone from
               the sidebar.
             </p>
+            {projectRunningCount > 0 && (
+              <p className="confirm-warning">{runningDeleteWarning(projectRunningCount, "project")}</p>
+            )}
             <div className="confirm-actions">
               <button type="button" onClick={() => setProjectToDelete(null)}>
                 Cancel
@@ -130,6 +142,9 @@ export function Sidebar({
             <p>
               This will delete "{notebookToDelete.title}" from Recents. Export or snapshot it first if you need a copy.
             </p>
+            {notebookRunningCount > 0 && (
+              <p className="confirm-warning">{runningDeleteWarning(notebookRunningCount, "notebook")}</p>
+            )}
             <div className="confirm-actions">
               <button type="button" onClick={() => setNotebookToDelete(null)}>
                 Cancel

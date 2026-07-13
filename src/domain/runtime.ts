@@ -234,7 +234,9 @@ export function createCellRunResult(
   const vars = extractOutputVars(rawOutput);
   const decision = evaluateDecision(parsed, vars, cell.alias);
   const initialErrors = [...(context.referenceErrors ?? []), ...(options.errors ?? [])];
-  const artifacts = initialErrors.length ? [] : createArtifacts(cell, parsed, runId, rawOutput, options.artifactContentByName);
+  const artifacts = initialErrors.some(isBlockingDiagnostic)
+    ? []
+    : createArtifacts(cell, parsed, runId, rawOutput, options.artifactContentByName);
   const errors = [...initialErrors, ...buildRunErrors(decision, artifacts)];
   const status = resolveStatus(decision, artifacts, errors);
   const providerRuns = options.providerRuns ?? buildProviderRuns(parsed, settings, status);
@@ -258,7 +260,7 @@ export function createCellRunResult(
       latencyMs,
       tokensIn,
       tokensOut,
-      summary: summarizeRun(status, parsed, artifacts, decision),
+      summary: summarizeRun(status, parsed, artifacts, decision, errors),
       providerRuns,
       inputResolved: context.inputResolved ?? parsed.references.map((reference) => reference.raw).join(", "),
       textOutputRaw: rawOutput,
@@ -610,8 +612,9 @@ function buildVisibleOutput(
   status: CellStatus,
   errors: Diagnostic[],
 ): string {
-  if (errors.length && status !== "artifact_error" && status !== "partial_failed") {
-    return errors.map((error) => error.message).join("\n");
+  const blockingErrors = errors.filter(isBlockingDiagnostic);
+  if (blockingErrors.length && status !== "artifact_error" && status !== "partial_failed") {
+    return blockingErrors.map((error) => error.message).join("\n");
   }
 
   const createdArtifacts = artifacts.filter((artifact) => artifact.status === "created");
@@ -619,20 +622,32 @@ function buildVisibleOutput(
   const hasArtifactDirective = parsed.outputs.files.length > 0 || parsed.outputs.images.length > 0;
   const textDirective = parsed.outputs.text;
   const artifactLines = formatArtifactSummary(createdArtifacts, failedArtifacts);
+  const withWarnings = (output: string) => prependWarnings(output, errors);
 
   if (hasArtifactDirective && !textDirective) {
-    return artifactLines || "No artifacts created.";
+    return withWarnings(artifactLines || "No artifacts created.");
   }
 
   if (textDirective?.limitChars && artifactLines) {
-    return `${rawOutput}\n\n${artifactLines}`;
+    return withWarnings(`${rawOutput}\n\n${artifactLines}`);
   }
 
   if (artifactLines) {
-    return `${rawOutput}\n\n${artifactLines}`;
+    return withWarnings(`${rawOutput}\n\n${artifactLines}`);
   }
 
-  return rawOutput;
+  return withWarnings(rawOutput);
+}
+
+function prependWarnings(output: string, errors: Diagnostic[]): string {
+  const warnings = errors.filter((error) => error.level === "warning" && error.code !== "cancelled");
+  if (!warnings.length) return output;
+  const warningText = warnings.map((warning) => warning.message).join("\n");
+  return [warningText, output].filter(Boolean).join("\n\n");
+}
+
+function isBlockingDiagnostic(error: Diagnostic): boolean {
+  return error.level === "error";
 }
 
 function buildRunErrors(decision: DecisionResult | undefined, artifacts: Artifact[]): Diagnostic[] {
@@ -659,11 +674,12 @@ function resolveStatus(
   artifacts: Artifact[],
   errors: Diagnostic[],
 ): CellStatus {
-  if (errors.some((error) => error.message.startsWith("Reference error:"))) return "reference_error";
+  const blockingErrors = errors.filter(isBlockingDiagnostic);
+  if (blockingErrors.some((error) => error.message.startsWith("Reference error:"))) return "reference_error";
   if (errors.some((error) => error.code === "timeout")) return "timeout";
   if (errors.some((error) => error.code === "cancelled")) return "cancelled";
   if (
-    errors.some(
+    blockingErrors.some(
       (error) =>
         error.message.startsWith("Configuration error:") ||
         error.code === "missing_renderer" ||
@@ -679,11 +695,14 @@ function resolveStatus(
     return "config_error";
   }
   if (decision?.error) return "decision_error";
+  if (errors.some((error) => error.code === "partial_provider_failure" || error.code === "ensemble_fallback")) {
+    return "partial_failed";
+  }
   if (artifacts.some((artifact) => artifact.status === "failed") && artifacts.some((artifact) => artifact.status === "created")) {
     return "partial_failed";
   }
   if (artifacts.some((artifact) => artifact.status === "failed")) return "artifact_error";
-  if (errors.length) return "failed";
+  if (blockingErrors.length) return "failed";
   return "completed";
 }
 
@@ -740,9 +759,13 @@ function summarizeRun(
   parsed: ParsedDsl,
   artifacts: Artifact[],
   decision: DecisionResult | undefined,
+  errors: Diagnostic[],
 ): string {
   if (decision?.error) return "Decision could not be evaluated.";
   if (status === "timeout") return "Provider latency limit exceeded.";
+  if (status === "partial_failed" && errors.some((error) => error.code === "partial_provider_failure" || error.code === "ensemble_fallback")) {
+    return "Completed with provider warnings.";
+  }
   if (artifacts.some((artifact) => artifact.status === "failed")) return "Completed with artifact errors.";
   if (decision?.routeTarget) return `Decision routed to ${decision.routeTarget}.`;
   if (artifacts.length) return `Created ${artifacts.length} artifact(s).`;

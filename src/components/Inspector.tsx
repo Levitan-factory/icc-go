@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock3, Cpu, Database, FileText, GitBranch } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Cpu, Database, FileText, GitBranch, Info } from "lucide-react";
 import type { ReactNode } from "react";
 import { fileKindLabel, formatBytes } from "../domain/attachments";
 import { artifactIcon } from "../domain/runtime";
@@ -20,8 +20,13 @@ export function Inspector({ cell, parsed, settings }: InspectorProps) {
     );
   }
 
-  const errors = parsed.diagnostics.filter((diagnostic) => diagnostic.level === "error");
-  const runErrors = cell.lastRun?.errors ?? [];
+  const parsedErrors = parsed.diagnostics.filter((diagnostic) => diagnostic.level === "error");
+  const parsedNotes = parsed.diagnostics.filter((diagnostic) => diagnostic.level !== "error");
+  const runDiagnostics = cell.lastRun?.errors ?? [];
+  const runErrors = runDiagnostics.filter((diagnostic) => diagnostic.level === "error");
+  const runNotes = runDiagnostics.filter((diagnostic) => diagnostic.level !== "error");
+  const hasErrors = parsedErrors.length > 0 || runErrors.length > 0;
+  const hasNotes = parsedNotes.length > 0 || runNotes.length > 0;
 
   return (
     <div className="inspector-content">
@@ -63,7 +68,7 @@ export function Inspector({ cell, parsed, settings }: InspectorProps) {
           <dt>Sender notes</dt>
           <dd>{parsed.senderNotes?.length ?? 0}</dd>
         </dl>
-        {errors.length ? <DiagnosticList diagnostics={errors} /> : <p className="quiet-text">Header parsed cleanly.</p>}
+        {parsedErrors.length ? <DiagnosticList diagnostics={parsedErrors} /> : <p className="quiet-text">Header parsed cleanly.</p>}
       </InspectorSection>
 
       <InspectorSection icon={<GitBranch size={15} />} title="Execution Plan">
@@ -141,23 +146,26 @@ export function Inspector({ cell, parsed, settings }: InspectorProps) {
 
       <InspectorSection icon={<Clock3 size={15} />} title="Run History">
         {cell.runHistory.length ? (
-          <div className="run-list">
-            {cell.runHistory.slice(0, 6).map((run) => (
-              <div key={run.id}>
-                <strong>{run.status}</strong>
-                <span>{new Date(run.startedAt).toLocaleTimeString()}</span>
-              </div>
-            ))}
-          </div>
+          <>
+            <p className="quiet-text">Latest run is listed first.</p>
+            <div className="run-list">
+              {cell.runHistory.slice(0, 6).map((run) => (
+                <div key={run.id}>
+                  <strong>{run.status}</strong>
+                  <span>{new Date(run.startedAt).toLocaleTimeString()}</span>
+                </div>
+              ))}
+            </div>
+          </>
         ) : (
           <p className="quiet-text">Runs will appear here.</p>
         )}
       </InspectorSection>
 
       <InspectorSection icon={<AlertTriangle size={15} />} title="Errors">
-        {parsed.diagnostics.length || runErrors.length ? (
+        {hasErrors ? (
           <>
-            <DiagnosticList diagnostics={parsed.diagnostics} />
+            <DiagnosticList diagnostics={parsedErrors} />
             <DiagnosticList diagnostics={runErrors} />
           </>
         ) : (
@@ -167,6 +175,13 @@ export function Inspector({ cell, parsed, settings }: InspectorProps) {
           </p>
         )}
       </InspectorSection>
+
+      {hasNotes && (
+        <InspectorSection icon={<Info size={15} />} title="Run Notes">
+          <DiagnosticList diagnostics={parsedNotes} />
+          <DiagnosticList diagnostics={runNotes} />
+        </InspectorSection>
+      )}
 
       <InspectorSection icon={<FileText size={15} />} title="Prompt Guidance">
         {parsed.flow.type === "if" && parsed.flow.expression ? (

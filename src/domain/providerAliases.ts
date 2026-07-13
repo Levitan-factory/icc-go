@@ -1,6 +1,7 @@
 import { createId, nowIso } from "../lib/id";
 import { knownModelValuesForProvider } from "./modelCatalog";
 import {
+  normalizeManagedAutoModelSetting,
   normalizeKnownModelAlias,
   normalizeKnownModelRef,
   providerPresets,
@@ -47,8 +48,8 @@ export function normalizeProviderSettings(provider: ProviderSettings): ProviderS
     enabled: Boolean(provider.enabled),
     apiKeyMasked: provider.apiKeyMasked ?? "",
     defaultModel: normalizeProfileModel(provider.defaultModel, preset.defaultModel),
-    maxModel: normalizeProfileModel(provider.maxModel, preset.maxModel),
-    ensembleModel: normalizeProfileModel(provider.ensembleModel || provider.maxModel, preset.ensembleModel),
+    maxModel: normalizeManagedAutoModelSetting(providerKind, "max", provider.maxModel, preset.maxModel),
+    ensembleModel: normalizeManagedAutoModelSetting(providerKind, "ensemble", provider.ensembleModel || provider.maxModel, preset.ensembleModel),
     imageModel: normalizeProfileModel(provider.imageModel, preset.imageModel),
     cheapModel: normalizeProfileModel(provider.cheapModel, preset.cheapModel),
     fastModel: normalizeProfileModel(provider.fastModel, preset.fastModel),
@@ -67,7 +68,6 @@ export function normalizeProviderSettings(provider: ProviderSettings): ProviderS
 function normalizeProfileModel(rawModel: string | undefined, fallbackModel: string): string {
   const raw = rawModel?.trim();
   if (!raw) return fallbackModel;
-  if (raw === "gpt-5.5-mini" && fallbackModel === "gpt-5.4-nano") return fallbackModel;
   return normalizeKnownModelAlias(raw);
 }
 

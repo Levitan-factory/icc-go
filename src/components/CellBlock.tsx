@@ -13,6 +13,7 @@ import {
   Paperclip,
   Play,
   Plus,
+  Share2,
   Square,
   Trash2,
   Type,
@@ -28,9 +29,11 @@ import {
   splitUnifiedCellSource,
 } from "../domain/cellSource";
 import { modelChoicesForProviderSettings } from "../domain/modelCatalog";
+import { downloadBlob } from "../domain/notebookExport";
 import { getSupportedFileFormats, getSupportedImageFormats, parseCellDsl } from "../language/latest";
 import { hasLegacyIccSyntax, migrateLegacyIccSyntax } from "../language/latest";
 import { providerAliasOptions } from "../domain/providerAliases";
+import { hasShareableOutput, isResultSectionDividerLine, resultOutputFilename, resultSharePayload } from "../domain/resultOutput";
 import { artifactIcon } from "../domain/runtime";
 import type { Artifact, CellAttachment, Diagnostic, NotebookCell, ParsedDsl, ProviderSelection, WorkspaceSettings } from "../domain/types";
 
@@ -115,6 +118,9 @@ export function CellBlock({
   const shouldShowResult = hasRenderableResult(cell, running);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [dropActive, setDropActive] = useState(false);
+  const [resultActionStatus, setResultActionStatus] = useState("");
+  const resultActionStatusTimerRef = useRef<number | undefined>(undefined);
+  const hasResultText = hasShareableOutput(cell);
 
   useEffect(() => {
     setCommittedEditorLines(new Set());
@@ -126,8 +132,51 @@ export function CellBlock({
     if (!hasErrors) setForceDiagnostics(false);
   }, [hasErrors]);
 
+  useEffect(() => {
+    setResultActionStatus("");
+  }, [cell.id, cell.output]);
+
+  useEffect(() => {
+    return () => {
+      if (resultActionStatusTimerRef.current) {
+        window.clearTimeout(resultActionStatusTimerRef.current);
+      }
+    };
+  }, []);
+
+  function flashResultActionStatus(message: string) {
+    setResultActionStatus(message);
+    if (resultActionStatusTimerRef.current) {
+      window.clearTimeout(resultActionStatusTimerRef.current);
+    }
+    resultActionStatusTimerRef.current = window.setTimeout(() => setResultActionStatus(""), 2200);
+  }
+
   async function copyOutput() {
+    if (!hasResultText) return;
     await navigator.clipboard?.writeText(cell.output);
+    flashResultActionStatus("Copied");
+  }
+
+  function saveOutput() {
+    if (!hasResultText) return;
+    downloadBlob(new Blob([cell.output], { type: "text/plain;charset=utf-8" }), resultOutputFilename(cell));
+    flashResultActionStatus("Saved");
+  }
+
+  async function shareOutput() {
+    if (!hasResultText) return;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share(resultSharePayload(cell));
+        flashResultActionStatus("Shared");
+        return;
+      } catch (error) {
+        if ((error as DOMException | undefined)?.name === "AbortError") return;
+      }
+    }
+    await navigator.clipboard?.writeText(cell.output);
+    flashResultActionStatus("Share unavailable; copied");
   }
 
   async function copyReference() {
@@ -239,6 +288,30 @@ export function CellBlock({
             aria-label={`${cell.alias} title`}
           />
         </div>
+        <div className="chip-row">
+          <ProviderRouteChips parsed={parsed} settings={settings} />
+          {visibleChips.map((chip, index) => (
+            <span className={`chip ${chipClass(chip)}`} key={`${chip}-${index}`}>
+              {chip}
+            </span>
+          ))}
+          {createdArtifacts.slice(0, 3).map((artifact) => (
+            <button
+              className="artifact-chip"
+              key={artifact.id}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenArtifact(artifact.id);
+              }}
+              title={`Open ${artifact.displayName}`}
+            >
+              {artifactIcon(artifact.extension)} {artifact.displayName}
+              {artifact.version > 1 ? ` v${artifact.version}` : ""}
+            </button>
+          ))}
+          {createdArtifacts.length > 3 && <span className="chip neutral">+{createdArtifacts.length - 3}</span>}
+        </div>
         <div className="cell-actions">
           <button
             type="button"
@@ -282,31 +355,6 @@ export function CellBlock({
             <Trash2 size={15} />
           </button>
         </div>
-      </div>
-
-      <div className="chip-row">
-        <ProviderRouteChips parsed={parsed} settings={settings} />
-        {visibleChips.map((chip, index) => (
-          <span className={`chip ${chipClass(chip)}`} key={`${chip}-${index}`}>
-            {chip}
-          </span>
-        ))}
-        {createdArtifacts.slice(0, 3).map((artifact) => (
-          <button
-            className="artifact-chip"
-            key={artifact.id}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenArtifact(artifact.id);
-            }}
-            title={`Open ${artifact.displayName}`}
-          >
-            {artifactIcon(artifact.extension)} {artifact.displayName}
-            {artifact.version > 1 ? ` v${artifact.version}` : ""}
-          </button>
-        ))}
-        {createdArtifacts.length > 3 && <span className="chip neutral">+{createdArtifacts.length - 3}</span>}
       </div>
 
       {compact ? (
@@ -367,7 +415,7 @@ export function CellBlock({
 
             {shouldShowResult && (
               <>
-                <div className="section-toggle">
+                <div className="section-toggle result-heading">
                   <button
                     type="button"
                     onClick={() => onUpdate({ collapsedOutput: !cell.collapsedOutput })}
@@ -376,9 +424,27 @@ export function CellBlock({
                     {cell.collapsedOutput ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                     Result
                   </button>
-                  <button type="button" onClick={copyOutput} title="Copy output" disabled={!cell.output}>
-                    <Clipboard size={15} />
-                  </button>
+                  {hasResultText && (
+                    <div className="result-actions" aria-label={`${cell.alias} result actions`}>
+                      <button type="button" onClick={copyOutput} title="Copy full result to clipboard">
+                        <Clipboard size={14} />
+                        Copy
+                      </button>
+                      <button type="button" onClick={saveOutput} title="Save result as a text file">
+                        <Download size={14} />
+                        Save .txt
+                      </button>
+                      <button type="button" onClick={shareOutput} title="Share result with the system share sheet">
+                        <Share2 size={14} />
+                        Share
+                      </button>
+                      {resultActionStatus && (
+                        <span className="result-action-status" aria-live="polite">
+                          {resultActionStatus}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {!cell.collapsedOutput && <ResultBlock cell={cell} running={running} />}
@@ -430,17 +496,12 @@ function ProviderRouteChips({ parsed, settings }: { parsed: ParsedDsl; settings:
     );
   }
 
-  const routingBadge =
-    routing.mode === "best" || routing.mode === "synthesis"
-      ? routing.method ?? (routing.mode === "synthesis" ? "ensemble" : routing.mode)
-      : routing.mode === "parallel"
-        ? "multi"
-        : undefined;
+  const routingBadge = routingModeBadge(parsed);
 
   return (
     <>
       {routing.providers.map((provider, index) => {
-        const microBadges = providerMicroBadges(provider, routingBadge);
+        const microBadges = providerMicroBadges(provider);
         return (
           <span
             className={`provider-chip ${microBadges.length ? "has-microbadges" : ""}`}
@@ -460,8 +521,19 @@ function ProviderRouteChips({ parsed, settings }: { parsed: ParsedDsl; settings:
           </span>
         );
       })}
+      {routingBadge && <span className={`chip route-mode-chip ${chipClass(routingBadge)}`}>{routingBadge}</span>}
     </>
   );
+}
+
+function routingModeBadge(parsed: ParsedDsl): string | undefined {
+  const routing = parsed.routing;
+  if (!routing) return undefined;
+  if (routing.mode === "best" || routing.mode === "synthesis") {
+    return routing.method ?? (routing.mode === "synthesis" ? "ensemble" : routing.mode);
+  }
+  if (routing.mode === "parallel") return "multi";
+  return undefined;
 }
 
 function chipsForDisplay(parsed: ParsedDsl, showHeaderErrors: boolean): string[] {
@@ -491,11 +563,10 @@ function allSourceLines(cell: NotebookCell): Set<number> {
   return new Set(Array.from({ length: lineCount }, (_value, index) => index + 1));
 }
 
-function providerMicroBadges(provider: ProviderSelection, routingBadge?: string): string[] {
+function providerMicroBadges(provider: ProviderSelection): string[] {
   const badges = [
     provider.profile && provider.profile !== "default" ? provider.profile : undefined,
     provider.model ? modelBadgeLabel(provider.model) : undefined,
-    routingBadge,
   ].filter(Boolean) as string[];
 
   return [...new Set(badges)];
@@ -581,8 +652,8 @@ function UnifiedCellEditor({
   onLineCommit: (line: number) => void;
   onCommitAll: () => void;
 }) {
-  const minEditorHeight = 224;
-  const maxEditorHeight = 720;
+  const minEditorHeight = 142;
+  const maxEditorHeight = 520;
   const externalSource = useMemo(
     () => combineCellSource(cell.controlHeader, cell.promptBody),
     [cell.controlHeader, cell.promptBody],
@@ -1450,7 +1521,7 @@ function ResultBlock({
   if (cell.status === "decision_error" && cell.decision?.error) {
     return <pre className="cell-output error-output">Decision error:\n{cell.decision.error}</pre>;
   }
-  if (cell.output) return <pre className="cell-output">{cell.output}</pre>;
+  if (cell.output) return <CellOutput output={cell.output} />;
   if (cell.status === "skipped") return <p className="inline-result">Skipped by flow decision.</p>;
   if (cell.status === "cancelled") return <p className="inline-result">Run cancelled.</p>;
   if (cell.status === "timeout") return <p className="inline-result">Provider latency limit exceeded.</p>;
@@ -1465,6 +1536,26 @@ function ResultBlock({
     return <p className="inline-result error">{resultStatusText(cell)}</p>;
   }
   return null;
+}
+
+function CellOutput({ output }: { output: string }) {
+  const lines = output.split("\n");
+  const hasSectionDividers = lines.some(isResultSectionDividerLine);
+
+  if (!hasSectionDividers) return <pre className="cell-output">{output}</pre>;
+
+  return (
+    <pre className="cell-output cell-output-rich">
+      {lines.map((line, index) => (
+        <span
+          key={`${index}-${line}`}
+          className={isResultSectionDividerLine(line) ? "cell-output-divider" : undefined}
+        >
+          {line || "\u00a0"}
+        </span>
+      ))}
+    </pre>
+  );
 }
 
 function hasRenderableResult(cell: NotebookCell, running: boolean): boolean {
@@ -1482,7 +1573,7 @@ function resultStatusText(cell: NotebookCell): string {
   if (cell.status === "reference_error") return "Reference could not be resolved.";
   if (cell.status === "decision_error") return cell.decision?.error ?? "Decision could not be evaluated.";
   if (cell.status === "config_error") return "Configuration is incomplete for this run.";
-  if (cell.status === "partial_failed") return "Some artifacts were created and some failed validation.";
+  if (cell.status === "partial_failed") return "Run completed with partial warnings.";
   if (cell.status === "artifact_error") return "Artifact generation failed.";
   if (cell.status === "failed") return "Run failed.";
   return "";
@@ -1529,7 +1620,7 @@ function chipClass(chip: string): string {
   if (chip === "if") return "if";
   if (chip.includes("best") || chip.includes("ensemble") || chip.includes("multi")) return "multi";
   if (chip.startsWith("file") || chip.startsWith("json") || chip.startsWith("{}")) return "artifact";
-  if (chip.startsWith("from ")) return "artifact";
+  if (chip.startsWith("from ")) return "reference";
   return "neutral";
 }
 

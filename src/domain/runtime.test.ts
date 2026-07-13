@@ -4,6 +4,29 @@ import { createInitialWorkspace } from "./fixtures";
 import { buildProviderPrompt, createCellRunResult, simulateCellRun } from "./runtime";
 
 describe("runtime simulation", () => {
+  function createParsedCell(controlHeader: string, promptBody = "Evaluate and return structured fields.") {
+    const workspace = createInitialWorkspace();
+    const notebook = workspace.projects[0].notebooks[0];
+    const cell = {
+      ...notebook.cells[0],
+      controlHeader,
+      promptBody,
+    };
+    const parsed = parseCellDsl(cell.controlHeader, cell.promptBody, {
+      knownAliases: notebook.cells.map((candidate) => candidate.alias),
+      providerAliases: workspace.settings.providers.map((provider) => ({
+        id: provider.id,
+        alias: provider.alias,
+        label: provider.label,
+        provider: provider.provider,
+      })),
+      defaultLoopIterations: workspace.settings.orchestration.defaultLoopIterations,
+      maxLoopIterations: workspace.settings.orchestration.maxLoopIterations,
+    });
+
+    return { workspace, cell, parsed };
+  }
+
   it("does not present a resolved %from prompt as the provider output", () => {
     const workspace = createInitialWorkspace();
     const notebook = workspace.projects[0].notebooks[0];
@@ -56,7 +79,7 @@ describe("runtime simulation", () => {
 
     expect(result.output).toContain("Linked key detected for this route");
     expect(result.output).toContain("provider execution adapters are not enabled yet");
-    expect(result.output).toContain("Resolved route: OpenAI / gpt-5.5");
+    expect(result.output).toContain("Resolved route: OpenAI / auto:max");
   });
 
   it("creates multiple formatted artifacts without clipping text output", () => {
@@ -355,5 +378,55 @@ describe("runtime simulation", () => {
     expect(result.status).toBe("config_error");
     expect(result.errors.map((error) => error.code)).toEqual(["binary_format_not_directly_generatable"]);
     expect(result.output).toContain("binary_format_not_directly_generatable");
+  });
+
+  it("routes an @if true branch from parseable numeric output", () => {
+    const { workspace, cell, parsed } = createParsedCell("> openai.max\n@if pnl > 0 -> c2\n@else -> c3");
+
+    const result = createCellRunResult(cell, parsed, workspace.settings, {}, "pnl = 12.5\nreason = positive net edge");
+
+    expect(result.status).toBe("completed");
+    expect(result.decision?.routeTarget).toBe("c2");
+    expect(result.decision?.skippedTargets).toEqual(["c3"]);
+    expect(result.run.summary).toBe("Decision routed to c2.");
+  });
+
+  it("routes an @else branch when an @if comparison is false", () => {
+    const { workspace, cell, parsed } = createParsedCell("> openai.max\n@if pnl > 0 -> c2\n@else -> c3");
+
+    const result = createCellRunResult(cell, parsed, workspace.settings, {}, "pnl = -3\nreason = fee drag");
+
+    expect(result.status).toBe("completed");
+    expect(result.decision?.routeTarget).toBe("c3");
+    expect(result.decision?.skippedTargets).toEqual(["c2"]);
+  });
+
+  it("reads @if variables from JSON provider output", () => {
+    const { workspace, cell, parsed } = createParsedCell("> openai.max\n@if accepted == true -> c2\n@else -> done");
+
+    const result = createCellRunResult(cell, parsed, workspace.settings, {}, '{"accepted": true, "score": 0.91}');
+
+    expect(result.status).toBe("completed");
+    expect(result.decision?.routeTarget).toBe("c2");
+    expect(result.vars).toMatchObject({ accepted: true, score: 0.91 });
+  });
+
+  it("supports string equality in @if decisions", () => {
+    const { workspace, cell, parsed } = createParsedCell("> openai.max\n@if status == approved -> c2\n@else -> c3");
+
+    const result = createCellRunResult(cell, parsed, workspace.settings, {}, "status = approved\nnotes = concise");
+
+    expect(result.status).toBe("completed");
+    expect(result.decision?.routeTarget).toBe("c2");
+  });
+
+  it("fails loudly when an @if variable is absent from provider output", () => {
+    const { workspace, cell, parsed } = createParsedCell("> openai.max\n@if pnl > 0 -> c2\n@else -> c3");
+
+    const result = createCellRunResult(cell, parsed, workspace.settings, {}, "score = 0.8\nreason = no pnl field");
+
+    expect(result.status).toBe("decision_error");
+    expect(result.errors[0]?.message).toContain("Decision error");
+    expect(result.output).toContain("Variable `pnl` was not found");
   });
 });

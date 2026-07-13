@@ -3,7 +3,7 @@
   "version": "0.1.11",
   "private": false,
   "type": "module",
-  "description": "ICC-GO is an Intent-Cell Coding notebook for executable LLM workflows.",
+  "description": "ICC-GO is a visual editor for AI loops with an executable ICC notebook underneath.",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
@@ -14,6 +14,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.2",
     "fflate": "^0.8.3",
     "lucide-react": "^0.562.0",
     "react": "^19.2.1",

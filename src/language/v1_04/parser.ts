@@ -123,7 +123,7 @@ export function parseCellDsl(
     const lineNumber = index + 1;
     const line = rawLine.trim();
 
-    if (!line || line.startsWith("\\>") || line.startsWith("\\<") || line.startsWith("\\@")) {
+    if (!line || line.startsWith("\\>") || line.startsWith("\\<") || line.startsWith("\\@") || line.startsWith("\\%")) {
       continue;
     }
 
@@ -169,10 +169,14 @@ export function parseCellDsl(
       continue;
     }
 
+    if (isHeaderReferenceLine(line)) {
+      continue;
+    }
+
     diagnostics.push({
       level: "warning",
       line: lineNumber,
-      message: "Control header lines should start with >, <, @, or an escape.",
+      message: "Control header lines should start with >, <, @, %, or an escape.",
     });
   }
 
@@ -1144,14 +1148,26 @@ function migrateLegacyReference(raw: string): string | undefined {
 
 function validateFlowTargets(flow: FlowPlan, knownAliases: string[], diagnostics: Diagnostic[]): void {
   const known = new Set(knownAliases);
+  if (flow.type === "forward") {
+    (flow.targets ?? [flow.target]).forEach((target) => {
+      if (target === "stop" || target === "done") return;
+      if (target && !known.has(target)) {
+        diagnostics.push({
+          level: "warning",
+          code: "forward_target_pending",
+          message: `Forward target \`${target}\` does not exist yet. Create ${target} before running this flow.`,
+        });
+      }
+    });
+    return;
+  }
+
   const targets =
-    flow.type === "forward"
-      ? flow.targets ?? [flow.target]
-      : flow.type === "chain"
-        ? flow.nodes
-        : flow.type === "if"
-          ? [flow.target, flow.elseTarget].filter(Boolean)
-          : [];
+    flow.type === "chain"
+      ? flow.nodes
+      : flow.type === "if"
+        ? [flow.target, flow.elseTarget].filter(Boolean)
+        : [];
 
   targets.forEach((target) => {
     if (target === "stop" || target === "done") return;
@@ -1159,6 +1175,12 @@ function validateFlowTargets(flow: FlowPlan, knownAliases: string[], diagnostics
       diagnostics.push({ level: "error", message: `Cell \`${target}\` not found.` });
     }
   });
+}
+
+function isHeaderReferenceLine(line: string): boolean {
+  return /^%(?:from\s+c[0-9]+(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)*|input|file\.c[0-9]+(?::[^\s%,.?!;:]+(?:\.[^\s%,.?!;:]+)*)?|files\.c[0-9]+|prompt\.c[0-9]+|header\.c[0-9]+|meta\.c[0-9]+\.[a-zA-Z_][a-zA-Z0-9_]*|error\.c[0-9]+(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)*)$/i.test(
+    line,
+  );
 }
 
 function createProviderLookup(providerAliases: ProviderAliasOption[] = []): ProviderAliasLookup {

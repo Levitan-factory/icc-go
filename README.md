@@ -1,8 +1,10 @@
 # ICC-GO
 
-Local-first notebook for reproducible LLM workflows written as intent cells.
+Visual editor for AI loops with an ICC notebook underneath.
 
-![ICC-GO 60-second demo](docs/assets/icc-go-60s-demo.gif)
+Build repeatable AI workflows visually, inspect them as executable ICC cells, and export everything as plain ICC DSL.
+
+![ICC-GO visual editor demo](docs/assets/icc-go-visual-demo.png)
 
 Install: `npm install && npm run dev`
 
@@ -15,6 +17,16 @@ Why this exists: chat is transient; ICC-GO is reproducible; cells are inspectabl
 npm install
 npm run dev
 ```
+
+## Visual First, Notebook When Needed
+
+ICC-GO now opens in the visual editor by default. A visual block is an ICC cell, an edge is flow (`@forward`, `@chain`, or `@if`), model selectors compile to `>`, constraints compile to `<`, references compile to `%from`, and outputs compile to `@file`, `@image`, or `@text`.
+
+Switch views at any time:
+
+- **Visual**: build and rearrange the workflow.
+- **Notebook**: inspect cells, prompts, runs, artifacts, and history.
+- **ICC Code**: read or export the plain ICC DSL underneath.
 
 ## Three-cell example
 
@@ -55,17 +67,20 @@ Produce a concise Markdown file with assumptions, user flows, acceptance criteri
 
 Ready-to-read ICC notebooks live in [examples](examples):
 
-- [multi_model_hypothesis.icc](examples/multi_model_hypothesis.icc)
+- [product_spec_review.icc](examples/product_spec_review.icc)
+- [choose_apartment.icc](examples/choose_apartment.icc)
 - [contract_review_with_notes.icc](examples/contract_review_with_notes.icc)
-- [code_generation_to_files.icc](examples/code_generation_to_files.icc)
-- [hft_strategy_branching.icc](examples/hft_strategy_branching.icc)
+- [code_review_to_file.icc](examples/code_review_to_file.icc)
+- [trading_hypothesis_validation.icc](examples/trading_hypothesis_validation.icc)
 - [image_and_markdown_artifacts.icc](examples/image_and_markdown_artifacts.icc)
 
 ## Roadmap
 
 Now:
 
-- Local-first notebook workspace.
+- Visual editor surface.
+- Notebook and ICC Code views over the same workflow.
+- Local-first visual and notebook workspace.
 - ICC DSL v1.04.
 - Provider keys and alias routing.
 - Generated artifacts and addressable references.
@@ -98,7 +113,7 @@ The ICC DSL command reference lives in [docs/commands.md](docs/commands.md). Kee
 - Compact and expanded cell modes for larger workflows.
 - ICC DSL v1.04 parsing for `>`, `<`, `@if`, `@forward`, registered `@file -format`, `@image`, `@text`, and `%` references such as `%from c2`, `%from c2.pnl`, `%error.c2.message`, and `%file.c3:name.ext`.
 - Cell statuses: `not_run`, `running`, `completed`, `partial_failed`, `skipped`, `stale`, `parse_error`, `reference_error`, `decision_error`, `config_error`, and `artifact_error`.
-- Strict `@if` decisions over parsed output variables from key-value lines or JSON.
+- Strict `@if` decisions over variables parsed from the current cell output, using key-value lines or JSON.
 - Cell actions: run, run from here, stop, duplicate, delete, move, collapse, copy output, copy reference.
 - Notebook actions: run all, run stale cells, validate, estimate cost, find/go to cell, clear outputs, and copy Markdown.
 - Right inspector for parsed DSL, execution plan, inputs, outputs, variables, artifacts, errors, metrics, and history.
@@ -123,7 +138,7 @@ npm run test:all
 The intended production shape is:
 
 ```text
-React notebook UI
+React visual/notebook UI
   -> API backend
   -> ICC DSL parser and validator
   -> execution planner
@@ -136,4 +151,4 @@ Provider execution uses a bound key when the selected adapter is available. If a
 
 ## Current Notes
 
-The current notebook uses ICC DSL v1.04 through `src/language/latest`. Encrypted secret storage, durable artifact storage, queues, richer streaming, collaboration, and Git integration should move behind an API backend in later production milestones.
+The current workspace uses ICC DSL v1.04 through `src/language/latest`. Encrypted secret storage, durable artifact storage, queues, richer streaming, collaboration, and Git integration should move behind an API backend in later production milestones.

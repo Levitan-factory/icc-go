@@ -9,8 +9,30 @@ import {
 } from "./runtime";
 import { attachmentToBlob } from "./attachments";
 import { fallbackProvider, providerModelForProfile } from "./providerAliases";
+import {
+  classifyRegistryModelCapability,
+  chooseStrongestModelForProfile,
+  fallbackProviderModelCatalog,
+  isModelCompatibleWithProfile,
+  normalizeKnownModelAlias,
+  resolveModelProfileForProvider,
+  uniqueRegistryModelChoices,
+  type ModelProfileResolution,
+  type RegistryModelChoice,
+} from "./providerModelRegistry";
 import { readProviderSecret } from "./providerSecrets";
-import type { ImageOutputDirective, NotebookCell, ParsedDsl, ProviderSelection, ProviderSettings, WorkspaceSettings } from "./types";
+import { resultSectionDivider } from "./resultOutput";
+import type {
+  CellStatus,
+  Diagnostic,
+  ImageOutputDirective,
+  NotebookCell,
+  ParsedDsl,
+  ProviderSelection,
+  ProviderSettings,
+  RunRecord,
+  WorkspaceSettings,
+} from "./types";
 
 interface ExecuteProviderRunOptions {
   signal?: AbortSignal;
@@ -20,20 +42,29 @@ interface LiveProviderTarget {
   configured: ProviderSettings;
   selection: ProviderSelection;
   model: string;
+  modelResolution: ModelProfileResolution;
   key: string;
   executor: TextProviderExecutor;
+  transportProvider?: ProviderSettings;
+  transportReason?: string;
 }
 
 interface LiveProviderResolution {
   targets: LiveProviderTarget[];
+  diagnostics?: Diagnostic[];
 }
 
 interface ProviderResponse {
   output: string;
   latencyMs: number;
+  diagnostics?: Diagnostic[];
+  providerRuns?: RunRecord["providerRuns"];
 }
 
+type ProviderRunRecord = RunRecord["providerRuns"][number];
+
 type TextProviderExecutor = "openai" | "openrouter" | "anthropic" | "gemini" | "xai" | "deepseek";
+type BrowserTransportPolicy = "direct" | "openrouter_bridge";
 
 const openAiResponsesUrl = "https://api.openai.com/v1/responses";
 const openAiImageGenerationsUrl = "https://api.openai.com/v1/images/generations";
@@ -45,6 +76,25 @@ const geminiGenerateContentBaseUrl = "https://generativelanguage.googleapis.com/
 const xAiChatUrl = "https://api.x.ai/v1/chat/completions";
 const deepSeekChatUrl = "https://api.deepseek.com/chat/completions";
 const defaultTextMaxTokens = 1024;
+const defaultGeminiTextMaxTokens = 4096;
+const maxGroupedProviderTargets = 8;
+
+const browserTextTransportPolicy: Partial<Record<ProviderSettings["provider"], BrowserTransportPolicy>> = {
+  openai: "direct",
+  openrouter: "direct",
+  anthropic: "openrouter_bridge",
+  gemini: "direct",
+  xai: "direct",
+  deepseek: "direct",
+};
+
+const browserDirectTextExecutors: Partial<Record<ProviderSettings["provider"], TextProviderExecutor>> = {
+  openai: "openai",
+  openrouter: "openrouter",
+  gemini: "gemini",
+  xai: "xai",
+  deepseek: "deepseek",
+};
 
 export async function executeCellRun(
   cell: NotebookCell,
@@ -53,6 +103,13 @@ export async function executeCellRun(
   context: RunContext = {},
   options: ExecuteProviderRunOptions = {},
 ): Promise<CellRunResult> {
+  const parsedErrors = parsed.diagnostics.filter(isBlockingDiagnostic);
+  if (parsedErrors.length) {
+    return createCellRunResult(cell, parsed, settings, context, "", {
+      errors: parsedErrors,
+    });
+  }
+
   const hasImageOutputs = parsed.outputs.images.length > 0;
   const outputErrors = validateOutputCapabilities(parsed, `${cell.title} ${context.resolvedPromptBody ?? cell.promptBody}`, {
     imageGenerationEnabled: hasImageOutputs,
@@ -86,6 +143,8 @@ export async function executeCellRun(
 
     return createCellRunResult(cell, parsed, settings, context, response.output, {
       latencyMs: response.latencyMs,
+      errors: [...(targetResolution.diagnostics ?? []), ...(response.diagnostics ?? [])],
+      providerRuns: response.providerRuns,
       notice: buildLiveExecutionNotice(parsed),
     });
   } catch (error) {
@@ -98,7 +157,7 @@ export async function executeCellRun(
             {
               level: "error",
               code: "timeout",
-              message: `timeout: provider did not respond within ${formatSeconds(limit)}.`,
+              message: buildTimeoutMessage("provider", limit),
             },
           ],
         });
@@ -175,7 +234,7 @@ async function executeImageCellRun(
             {
               level: "error",
               code: "timeout",
-              message: `timeout: image provider did not respond within ${formatSeconds(limit)}.`,
+              message: buildTimeoutMessage("image provider", limit),
             },
           ],
         });
@@ -635,7 +694,14 @@ function resolveLiveProviderTargets(
   });
 
   if (errors.length) return { error: errors.join("\n") };
-  return { targets };
+  const normalized = normalizeLiveProviderTargets(targets);
+  if (normalized.targets.length > maxGroupedProviderTargets) {
+    return {
+      error: `Configuration error: grouped routes support up to ${maxGroupedProviderTargets} unique provider/model targets. Split this run into multiple cells.`,
+    };
+  }
+
+  return normalized;
 }
 
 function resolveLiveProviderTarget(selection: ProviderSelection, settings: WorkspaceSettings): LiveProviderTarget | { error: string } {
@@ -644,16 +710,42 @@ function resolveLiveProviderTarget(selection: ProviderSelection, settings: Works
     return { error: `Configuration error: provider \`${selection.alias ?? selection.provider}\` is not configured.` };
   }
 
-  const model = providerModelForProfile(configured, selection.profile, selection.model);
-  const executor = textExecutorForProvider(configured);
-  if (!executor) {
+  let modelResolution = resolveModelProfileForProvider(configured, selection.profile, selection.model);
+  const compatibleResolution = resolveLiveTextModelCompatibility(configured, selection, modelResolution);
+  if ("error" in compatibleResolution) return compatibleResolution;
+  modelResolution = compatibleResolution;
+  const model = modelResolution.model;
+  const transportPolicy = browserTextTransportPolicy[configured.provider];
+  if (!transportPolicy) {
     return {
       error: `Configuration error: live adapter for ${configured.label} is not enabled yet. Supported live text adapters: OpenAI, OpenRouter, Anthropic, Gemini, xAI, and DeepSeek.`,
     };
   }
 
+  if (transportPolicy === "openrouter_bridge") {
+    const openRouterTransport = resolveOpenRouterTextTransport(configured, selection, modelResolution, settings);
+    if (openRouterTransport && "error" in openRouterTransport) return openRouterTransport;
+    if (openRouterTransport) return openRouterTransport;
+    return {
+      error: `Configuration error: ${configured.label} cannot be called directly from the browser. Link an OpenRouter key in Settings or enable the hosted provider proxy before running this route.`,
+    };
+  }
+
+  const executor = browserDirectTextExecutors[configured.provider];
+  if (!executor) {
+    return {
+      error: `Configuration error: ${configured.label} is not allowed for direct browser text execution. Use OpenRouter or the hosted provider proxy for this route.`,
+    };
+  }
+
   if (!configured.apiKeyMasked) {
     return { error: `Configuration error: no API key is linked for ${configured.label}. Add one in Settings.` };
+  }
+
+  if (configured.balance.state === "error") {
+    return {
+      error: `Configuration error: ${configured.label} balance check failed: ${configured.balance.message} Re-check the key or update billing before running this route.`,
+    };
   }
 
   const key = readProviderSecret(configured.id);
@@ -663,7 +755,207 @@ function resolveLiveProviderTarget(selection: ProviderSelection, settings: Works
     };
   }
 
-  return { configured, selection, model, key, executor };
+  return { configured, selection, model, modelResolution, key, executor };
+}
+
+function resolveLiveTextModelCompatibility(
+  configured: ProviderSettings,
+  selection: ProviderSelection,
+  modelResolution: ModelProfileResolution,
+): ModelProfileResolution | { error: string } {
+  if (isModelCompatibleWithProfile(modelResolution.model, modelResolution.profile)) return modelResolution;
+
+  const capability = classifyRegistryModelCapability(modelResolution.model) ?? "unknown";
+  const routeLabel = `${configured.alias || configured.label}.${modelResolution.profile}`;
+  const isExplicitRoute = Boolean(selection.model) || modelResolution.source === "explicit";
+  if (isExplicitRoute) {
+    return {
+      error: `Configuration error: ${routeLabel} resolves to \`${modelResolution.model}\`, which is ${capability}, not a text/chat model. Choose a text-capable model before running this cell.`,
+    };
+  }
+
+  const replacement = resolveCompatibleLiveTextModel(configured, modelResolution);
+  if (replacement) return replacement;
+
+  return {
+    error: `Configuration error: ${routeLabel} resolved to \`${modelResolution.model}\`, which is ${capability}, not a text/chat model. Refresh ${configured.label} models in Settings or pin a compatible text model before running this cell.`,
+  };
+}
+
+function resolveCompatibleLiveTextModel(
+  configured: ProviderSettings,
+  modelResolution: ModelProfileResolution,
+): ModelProfileResolution | undefined {
+  const catalog = providerCatalogWithFallback(configured);
+  if (!catalog.length) return undefined;
+
+  const model = chooseStrongestModelForProfile(configured.provider, catalog, modelResolution.profile);
+  if (!model || !isModelCompatibleWithProfile(model, modelResolution.profile)) return undefined;
+
+  return {
+    ...modelResolution,
+    model,
+    source: modelResolutionSourceForCatalogChoice(configured, model),
+    catalogUpdatedAt: providerHasLiveCatalogModel(configured, model) ? configured.modelCatalogUpdatedAt : undefined,
+    policy: [
+      modelResolution.policy,
+      `${configured.alias || configured.label}.${modelResolution.profile} had resolved to non-text model \`${modelResolution.model}\`; ICC-GO selected \`${model}\` from the ${modelCatalogLabelForChoice(configured, model)} for text execution.`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
+function resolveOpenRouterTextTransport(
+  configured: ProviderSettings,
+  selection: ProviderSelection,
+  modelResolution: ModelProfileResolution,
+  settings: WorkspaceSettings,
+): LiveProviderTarget | { error: string } | undefined {
+  if (configured.provider !== "anthropic") return undefined;
+
+  const transportProvider = settings.providers.find((provider) => provider.enabled && provider.provider === "openrouter");
+  if (!transportProvider?.apiKeyMasked || transportProvider.balance.state === "error") return undefined;
+
+  const key = readProviderSecret(transportProvider.id);
+  if (!key) return undefined;
+
+  const bridgeModel = resolveOpenRouterBridgeModel(configured, selection, modelResolution, transportProvider);
+  if (!bridgeModel) {
+    return {
+      error: `Configuration error: ${configured.alias || configured.label}.${modelResolution.profile} cannot be bridged through OpenRouter. Refresh OpenRouter models in Settings or pin an explicit Anthropic model.`,
+    };
+  }
+
+  const openRouterModel = bridgeModel.model;
+  return {
+    configured,
+    selection,
+    model: openRouterModel,
+    modelResolution: {
+      ...modelResolution,
+      model: openRouterModel,
+      source: bridgeModel.source,
+      catalogUpdatedAt: bridgeModel.catalogUpdatedAt,
+      policy: [
+        modelResolution.policy,
+        bridgeModel.policy,
+        "Anthropic is routed through OpenRouter in the browser because Anthropic does not allow direct browser-origin API calls.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    },
+    key,
+    executor: "openrouter",
+    transportProvider,
+    transportReason:
+      "Anthropic is routed through OpenRouter in the browser because Anthropic does not allow direct browser-origin API calls.",
+  };
+}
+
+function resolveOpenRouterBridgeModel(
+  configured: ProviderSettings,
+  selection: ProviderSelection,
+  modelResolution: ModelProfileResolution,
+  transportProvider: ProviderSettings,
+): { model: string; source: ModelProfileResolution["source"]; catalogUpdatedAt?: string; policy?: string } | undefined {
+  if (!selection.model && (modelResolution.profile === "max" || modelResolution.profile === "ensemble")) {
+    const prefix = openRouterModelPrefixForProvider(configured.provider);
+    if (!prefix) return undefined;
+
+    const choices = providerCatalogWithFallback(transportProvider, "openrouter").filter((choice) =>
+      normalizeOpenRouterModelLookup(choice.value).startsWith(prefix),
+    );
+    const model = chooseStrongestModelForProfile(configured.provider, choices, modelResolution.profile);
+    if (!model) return undefined;
+
+    return {
+      model,
+      source: modelResolutionSourceForCatalogChoice(transportProvider, model),
+      catalogUpdatedAt: providerHasLiveCatalogModel(transportProvider, model) ? transportProvider.modelCatalogUpdatedAt : undefined,
+      policy: `${configured.alias || configured.label}.${modelResolution.profile} was selected from the ${modelCatalogLabelForChoice(transportProvider, model)} through OpenRouter for browser-safe execution.`,
+    };
+  }
+
+  if (selection.model || modelResolution.source !== "auto-fallback") {
+    const model = openRouterModelForProvider(configured.provider, modelResolution.model);
+    if (!model) return undefined;
+
+    return {
+      model,
+      source: modelResolution.source,
+      catalogUpdatedAt: modelResolution.catalogUpdatedAt,
+      policy: modelResolution.policy,
+    };
+  }
+
+  return undefined;
+}
+
+function providerCatalogWithFallback(
+  configured: ProviderSettings,
+  fallbackKind: ProviderSettings["provider"] = configured.provider,
+): RegistryModelChoice[] {
+  return uniqueRegistryModelChoices([...(configured.modelCatalog ?? []), ...(fallbackProviderModelCatalog[fallbackKind] ?? [])]);
+}
+
+function providerHasLiveCatalogModel(configured: ProviderSettings, model: string): boolean {
+  const needle = normalizeModelLookup(model);
+  return Boolean((configured.modelCatalog ?? []).some((choice) => normalizeModelLookup(choice.value) === needle));
+}
+
+function modelResolutionSourceForCatalogChoice(
+  configured: ProviderSettings,
+  model: string,
+): ModelProfileResolution["source"] {
+  if (!providerHasLiveCatalogModel(configured, model)) return "auto-fallback";
+  return configured.modelCatalogSource === "public-api" ? "auto-public-api" : "auto-provider-api";
+}
+
+function modelCatalogLabelForChoice(configured: ProviderSettings, model: string): string {
+  return providerHasLiveCatalogModel(configured, model) ? "latest cached model catalog" : "bundled fallback model catalog";
+}
+
+function normalizeModelLookup(value: string): string {
+  return normalizeKnownModelAlias(value).trim().toLowerCase();
+}
+
+function normalizeOpenRouterModelLookup(value: string): string {
+  return normalizeModelLookup(value).replace(/^~/, "");
+}
+
+function normalizeLiveProviderTargets(targets: LiveProviderTarget[]): LiveProviderResolution {
+  const uniqueTargets: LiveProviderTarget[] = [];
+  const seen = new Set<string>();
+  const diagnostics: Diagnostic[] = [];
+
+  targets.forEach((target) => {
+    const key = liveProviderTargetKey(target);
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueTargets.push(target);
+      if (target.transportReason) {
+        diagnostics.push({
+          level: "info",
+          code: "provider_transport",
+          message: `${providerRunLabel(target)}: ${target.transportReason}`,
+        });
+      }
+      return;
+    }
+
+    diagnostics.push({
+      level: "warning",
+      code: "duplicate_provider_route",
+      message: `Duplicate provider route ignored (${providerRunLabel(target)}). Each provider/model target is executed once per grouped route.`,
+    });
+  });
+
+  return { targets: uniqueTargets, diagnostics };
+}
+
+function liveProviderTargetKey(target: LiveProviderTarget): string {
+  return [target.transportProvider?.id ?? target.configured.id, target.executor, target.model.trim().toLowerCase()].join("::");
 }
 
 function fallbackProviderSelection(settings: WorkspaceSettings): ProviderSelection | undefined {
@@ -703,19 +995,14 @@ function normalizeLookupValue(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function textExecutorForProvider(provider: ProviderSettings): TextProviderExecutor | undefined {
-  if (provider.provider === "openai") return "openai";
-  if (provider.provider === "openrouter") return "openrouter";
-  if (provider.provider === "anthropic") return "anthropic";
-  if (provider.provider === "gemini") return "gemini";
-  if (provider.provider === "xai") return "xai";
-  if (provider.provider === "deepseek") return "deepseek";
-  return undefined;
-}
-
 interface ProviderCandidateResponse {
   target: LiveProviderTarget;
   response: ProviderResponse;
+}
+
+interface ProviderFailure {
+  target: LiveProviderTarget;
+  reason: unknown;
 }
 
 async function runTextProviderTargets(
@@ -725,63 +1012,142 @@ async function runTextProviderTargets(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<ProviderResponse> {
-  if (targets.length === 1) return runTextProviderResponse(targets[0], prompt, signal);
+  if (targets.length === 1) {
+    const response = await runTextProviderResponse(targets[0], prompt, signal);
+    return {
+      ...response,
+      providerRuns: [providerRunForTarget(targets[0], "completed")],
+    };
+  }
 
   const started = performance.now();
   const settled = await Promise.allSettled(targets.map((target) => runTextProviderResponse(target, prompt, signal)));
   const successes: ProviderCandidateResponse[] = [];
-  const failures: unknown[] = [];
+  const failures: ProviderFailure[] = [];
 
   settled.forEach((result, index) => {
     if (result.status === "fulfilled") {
       successes.push({ target: targets[index], response: result.value });
     } else {
-      failures.push(result.reason);
+      failures.push({ target: targets[index], reason: result.reason });
     }
   });
 
   if (!successes.length) {
-    const abort = failures.find(isAbortError);
+    const abort = failures.map((failure) => failure.reason).find(isAbortError);
     if (abort) throw abort;
-    throw new Error(`All routed providers failed: ${failures.map(errorMessage).join(" | ")}`);
+    throw new Error(`All routed providers failed: ${failures.map((failure) => errorMessage(failure.reason)).join(" | ")}`);
   }
+
+  const diagnostics = buildPartialProviderDiagnostics(parsed, successes, failures, targets.length);
+  const providerRuns = buildGroupedProviderRuns(targets, settled);
+  const latencyMs = Math.max(1, Math.round(performance.now() - started));
 
   if (parsed.routing?.mode === "best" || parsed.routing?.method === "best") {
     const selected = await selectBestProviderResponse(successes, settings, prompt, signal);
     return {
       output: selected.response.output,
-      latencyMs: Math.max(1, Math.round(performance.now() - started)),
+      latencyMs,
+      diagnostics,
+      providerRuns,
     };
   }
 
   if (parsed.routing?.mode === "synthesis" || parsed.routing?.method === "ensemble") {
-    const output = await synthesizeProviderResponses(successes, settings, prompt, signal);
+    const synthesized = await synthesizeProviderResponses(successes, failures, settings, prompt, signal);
     return {
-      output,
-      latencyMs: Math.max(1, Math.round(performance.now() - started)),
+      output: synthesized.output,
+      latencyMs,
+      diagnostics: [...diagnostics, ...(synthesized.diagnostics ?? [])],
+      providerRuns,
     };
   }
 
   return {
     output: joinProviderResponses(successes),
-    latencyMs: Math.max(1, Math.round(performance.now() - started)),
+    latencyMs,
+    diagnostics,
+    providerRuns,
+  };
+}
+
+function buildPartialProviderDiagnostics(
+  parsed: ParsedDsl,
+  successes: ProviderCandidateResponse[],
+  failures: ProviderFailure[],
+  requestedCount: number,
+): Diagnostic[] {
+  if (!failures.length) return [];
+
+  const routeName =
+    parsed.routing?.mode === "synthesis" || parsed.routing?.method === "ensemble"
+      ? "Ensemble"
+      : parsed.routing?.mode === "best" || parsed.routing?.method === "best"
+        ? "Best routing"
+        : "Grouped routing";
+  const failedLabels = failures.map((failure) => providerRunLabel(failure.target)).join(", ");
+
+  return [
+    {
+      level: "warning",
+      code: "partial_provider_failure",
+      message: `${routeName} completed with ${successes.length} of ${requestedCount} provider candidates. Failed providers: ${failedLabels}.`,
+    },
+    ...failures.map((failure) => ({
+      level: "warning" as const,
+      code: "partial_provider_failure",
+      message: `Provider warning (${providerRunLabel(failure.target)}): ${errorMessage(failure.reason)}`,
+    })),
+  ];
+}
+
+function buildGroupedProviderRuns(
+  targets: LiveProviderTarget[],
+  settled: PromiseSettledResult<ProviderResponse>[],
+): ProviderRunRecord[] {
+  return targets.map((target, index) =>
+    providerRunForTarget(
+      target,
+      settled[index]?.status === "fulfilled" ? "completed" : providerFailureStatus(settled[index]),
+    ),
+  );
+}
+
+function providerFailureStatus(result: PromiseSettledResult<ProviderResponse> | undefined): CellStatus {
+  if (result?.status === "rejected" && isAbortError(result.reason)) return "timeout";
+  return "failed";
+}
+
+function providerRunForTarget(target: LiveProviderTarget, status: CellStatus): ProviderRunRecord {
+  const configuredLabel = target.selection.alias ?? target.configured.alias ?? target.configured.label;
+  return {
+    provider: target.transportProvider
+      ? `${configuredLabel} via ${target.transportProvider.alias || target.transportProvider.label}`
+      : configuredLabel,
+    model: target.model,
+    status,
   };
 }
 
 async function runTextProviderResponse(target: LiveProviderTarget, prompt: string, signal?: AbortSignal): Promise<ProviderResponse> {
-  switch (target.executor) {
-    case "openai":
-      return runOpenAiResponse(target, prompt, signal);
-    case "openrouter":
-      return runOpenRouterResponse(target, prompt, signal);
-    case "anthropic":
-      return runAnthropicResponse(target, prompt, signal);
-    case "gemini":
-      return runGeminiResponse(target, prompt, signal);
-    case "xai":
-      return runXAiResponse(target, prompt, signal);
-    case "deepseek":
-      return runDeepSeekResponse(target, prompt, signal);
+  try {
+    switch (target.executor) {
+      case "openai":
+        return await runOpenAiResponse(target, prompt, signal);
+      case "openrouter":
+        return await runOpenRouterResponse(target, prompt, signal);
+      case "anthropic":
+        return await runAnthropicResponse(target, prompt, signal);
+      case "gemini":
+        return await runGeminiResponse(target, prompt, signal);
+      case "xai":
+        return await runXAiResponse(target, prompt, signal);
+      case "deepseek":
+        return await runDeepSeekResponse(target, prompt, signal);
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    throw new Error(providerExecutionErrorMessage(target, error));
   }
 }
 
@@ -811,23 +1177,53 @@ async function selectBestProviderResponse(
 
 async function synthesizeProviderResponses(
   candidates: ProviderCandidateResponse[],
+  failures: ProviderFailure[],
   settings: WorkspaceSettings,
   prompt: string,
   signal?: AbortSignal,
-): Promise<string> {
-  if (candidates.length === 1) return candidates[0].response.output;
+): Promise<Pick<ProviderResponse, "output" | "diagnostics">> {
+  if (candidates.length === 1) return { output: candidates[0].response.output };
 
   const synthesizer = resolveOrchestrationTarget(settings, settings.orchestration.synthesisModel);
   if (!("error" in synthesizer)) {
     try {
-      const response = await runTextProviderResponse(synthesizer, buildSynthesisPrompt(prompt, candidates), signal);
-      if (response.output.trim()) return response.output;
+      const response = await runTextProviderResponse(synthesizer, buildSynthesisPrompt(prompt, candidates, failures), signal);
+      if (response.output.trim()) return { output: response.output };
+      return {
+        output: joinProviderResponses(candidates),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "ensemble_fallback",
+            message: `Ensemble warning (${providerRunLabel(synthesizer)}): synthesizer returned an empty answer, so ICC-GO is showing successful candidate outputs.`,
+          },
+        ],
+      };
     } catch (error) {
       if (isAbortError(error)) throw error;
+      return {
+        output: joinProviderResponses(candidates),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "ensemble_fallback",
+            message: `Ensemble warning (${providerRunLabel(synthesizer)}): ${errorMessage(error)}. Showing successful candidate outputs.`,
+          },
+        ],
+      };
     }
   }
 
-  return joinProviderResponses(candidates);
+  return {
+    output: joinProviderResponses(candidates),
+    diagnostics: [
+      {
+        level: "warning",
+        code: "ensemble_fallback",
+        message: `Ensemble warning: ${synthesizer.error}. Showing successful candidate outputs.`,
+      },
+    ],
+  };
 }
 
 function resolveOrchestrationTarget(settings: WorkspaceSettings, modelRef: string): LiveProviderTarget | { error: string } {
@@ -870,15 +1266,21 @@ function buildSelectorPrompt(prompt: string, candidates: ProviderCandidateRespon
   ].join("\n");
 }
 
-function buildSynthesisPrompt(prompt: string, candidates: ProviderCandidateResponse[]): string {
+function buildSynthesisPrompt(prompt: string, candidates: ProviderCandidateResponse[], failures: ProviderFailure[] = []): string {
   return [
     "ICC-GO ensemble task.",
     "Combine the useful parts of the candidate responses into one concise final answer.",
     "Preserve concrete facts and remove contradictions. Do not mention this instruction.",
+    failures.length
+      ? "Some requested provider candidates failed. Do not invent their missing responses; synthesize only from the successful candidates listed below."
+      : undefined,
     "",
     "User intent:",
     prompt,
     "",
+    failures.length ? "Failed provider candidates:" : undefined,
+    ...failures.map((failure) => `- ${providerRunLabel(failure.target)}: ${errorMessage(failure.reason)}`),
+    failures.length ? "" : undefined,
     "Candidate responses:",
     ...candidates.flatMap((candidate, index) => [
       `Candidate ${index + 1} (${providerRunLabel(candidate.target)}):`,
@@ -910,7 +1312,7 @@ function parseWinnerIndex(output: string, candidateCount: number): number | unde
 
 function joinProviderResponses(candidates: ProviderCandidateResponse[]): string {
   return candidates
-    .map((candidate) => [`## ${providerRunLabel(candidate.target)}`, candidate.response.output.trim()].join("\n"))
+    .map((candidate) => [resultSectionDivider(providerRunLabel(candidate.target)), candidate.response.output.trim()].join("\n"))
     .join("\n\n");
 }
 
@@ -1024,7 +1426,7 @@ async function runGeminiResponse(target: LiveProviderTarget, prompt: string, sig
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: defaultTextMaxTokens,
+        maxOutputTokens: defaultGeminiTextMaxTokens,
       },
     }),
   });
@@ -1035,7 +1437,7 @@ async function runGeminiResponse(target: LiveProviderTarget, prompt: string, sig
   }
   const output = extractGeminiText(payload);
   if (!output) {
-    throw new Error(providerErrorMessage(payload, "Gemini returned a response without text output."));
+    throw new Error(geminiEmptyTextMessage(payload));
   }
 
   return {
@@ -1179,6 +1581,74 @@ function directModelNameForProvider(provider: ProviderSettings["provider"], mode
   return prefix ? normalized.slice(prefix.length) : normalized;
 }
 
+function openRouterModelForProvider(provider: ProviderSettings["provider"], model: string): string {
+  const normalized = model.trim();
+  if (!normalized) return normalized;
+
+  const bridgeModel = openRouterCanonicalModelForProvider(provider, normalized);
+  if (bridgeModel) return bridgeModel;
+
+  if (normalized.includes("/")) return normalizeKnownModelAlias(normalized);
+
+  const prefix = openRouterModelPrefixForProvider(provider);
+  return prefix ? `${prefix}${normalizeKnownModelAlias(normalized)}` : normalizeKnownModelAlias(normalized);
+}
+
+function openRouterModelPrefixForProvider(provider: ProviderSettings["provider"]): string | undefined {
+  const providerPrefixes: Partial<Record<ProviderSettings["provider"], string>> = {
+    openai: "openai/",
+    anthropic: "anthropic/",
+    gemini: "google/",
+    xai: "x-ai/",
+    deepseek: "deepseek/",
+    mistral: "mistralai/",
+  };
+  return providerPrefixes[provider];
+}
+
+function openRouterCanonicalModelForProvider(provider: ProviderSettings["provider"], model: string): string | undefined {
+  const normalized = normalizeKnownModelAlias(model).toLowerCase();
+  if (provider === "anthropic") {
+    const strongest = "~anthropic/claude-opus-latest";
+    const sonnet = "~anthropic/claude-sonnet-latest";
+    const fast = "~anthropic/claude-haiku-latest";
+    const anthropicBridge: Record<string, string> = {
+      "claude-sonnet-latest": sonnet,
+      "claude-3-5-sonnet-latest": sonnet,
+      "claude-sonnet-5": sonnet,
+      "claude-sonnet-4-6": sonnet,
+      "claude-sonnet-4-5-20250929": sonnet,
+      "claude-opus-latest": strongest,
+      "claude-opus-4-8": strongest,
+      "claude-opus-4-7": strongest,
+      "claude-opus-4-6": strongest,
+      "claude-fable-5": sonnet,
+      "claude-haiku-latest": fast,
+      "claude-3-5-haiku-latest": fast,
+      "claude-haiku-4-5-20251001": fast,
+      "anthropic/claude-sonnet-latest": sonnet,
+      "~anthropic/claude-sonnet-latest": sonnet,
+      "anthropic/claude-3-5-sonnet-latest": sonnet,
+      "anthropic/claude-3.5-sonnet": sonnet,
+      "anthropic/claude-sonnet-5": sonnet,
+      "anthropic/claude-sonnet-4.6": sonnet,
+      "anthropic/claude-opus-latest": strongest,
+      "~anthropic/claude-opus-latest": strongest,
+      "anthropic/claude-opus-4.8": strongest,
+      "anthropic/claude-opus-4.7": strongest,
+      "anthropic/claude-opus-4.6": strongest,
+      "anthropic/claude-fable-5": sonnet,
+      "anthropic/claude-haiku-latest": fast,
+      "~anthropic/claude-haiku-latest": fast,
+      "anthropic/claude-3-5-haiku-latest": fast,
+      "anthropic/claude-3-haiku": fast,
+      "anthropic/claude-haiku-4-5-20251001": fast,
+    };
+    return anthropicBridge[normalized];
+  }
+  return undefined;
+}
+
 function providerErrorMessage(payload: unknown, fallback: string): string {
   if (isRecord(payload)) {
     const error = payload.error;
@@ -1190,6 +1660,68 @@ function providerErrorMessage(payload: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function providerExecutionErrorMessage(target: LiveProviderTarget, error: unknown): string {
+  if (isBrowserFetchTransportError(error)) {
+    if (target.executor === "anthropic") {
+      return [
+        "Browser request failed before an HTTP response.",
+        "Anthropic rejected the direct browser-origin request for this API.",
+        "For GO-ONLINE, route Claude through OpenRouter or enable the hosted provider proxy.",
+      ].join(" ");
+    }
+
+    return [
+      "Browser request failed before an HTTP response.",
+      "Check provider CORS support, network availability, browser extensions, or use a backend provider proxy.",
+    ].join(" ");
+  }
+
+  return errorMessage(error);
+}
+
+function isBrowserFetchTransportError(error: unknown): boolean {
+  return error instanceof TypeError && /failed to fetch/i.test(error.message);
+}
+
+function geminiEmptyTextMessage(payload: unknown): string {
+  if (!isRecord(payload)) return "Gemini returned a response without text output.";
+
+  const promptFeedback = isRecord(payload.promptFeedback) ? payload.promptFeedback : undefined;
+  const blockReason = typeof promptFeedback?.blockReason === "string" ? promptFeedback.blockReason : "";
+  if (blockReason) {
+    return `Gemini returned no text because the prompt was blocked (${blockReason}).`;
+  }
+
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+  const first = candidates.find(isRecord);
+  const finishReason = typeof first?.finishReason === "string" ? first.finishReason : "";
+  const safetyRatings = Array.isArray(first?.safetyRatings)
+    ? first.safetyRatings
+        .map((rating) => {
+          if (!isRecord(rating)) return "";
+          const category = typeof rating.category === "string" ? rating.category : "";
+          const probability = typeof rating.probability === "string" ? rating.probability : "";
+          return category && probability ? `${category}: ${probability}` : "";
+        })
+        .filter(Boolean)
+    : [];
+
+  if (finishReason === "MAX_TOKENS") {
+    return "Gemini returned no text because its output token budget was exhausted before a visible answer. Try a shorter prompt, a larger output budget, or another Gemini model.";
+  }
+
+  if (finishReason) {
+    const safety = safetyRatings.length ? ` Safety ratings: ${safetyRatings.join(", ")}.` : "";
+    return `Gemini returned no text (finishReason: ${finishReason}).${safety}`;
+  }
+
+  if (!candidates.length) {
+    return "Gemini returned no candidates. Check the model id, prompt safety filters, and provider status.";
+  }
+
+  return providerErrorMessage(payload, "Gemini returned a response without text output.");
 }
 
 function isProviderErrorPayload(payload: unknown): boolean {
@@ -1206,7 +1738,11 @@ function describeTextResolution(resolution: LiveProviderResolution | { error: st
 }
 
 function providerRunLabel(target: LiveProviderTarget): string {
-  return `${target.configured.alias || target.configured.label} / ${target.model}`;
+  const configuredLabel = target.configured.alias || target.configured.label;
+  if (target.transportProvider) {
+    return `${configuredLabel} via ${target.transportProvider.alias || target.transportProvider.label} / ${target.model}`;
+  }
+  return `${configuredLabel} / ${target.model}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -1218,8 +1754,22 @@ function formatSeconds(seconds: number): string {
   return `${seconds}s`;
 }
 
+function buildTimeoutMessage(kind: "provider" | "image provider", limit: number): string {
+  const formattedLimit = formatSeconds(limit);
+  return [
+    `timeout: ${kind} did not respond within ${formattedLimit}.`,
+    "",
+    "The latency constraint is a hard execution deadline, not a style instruction for the model.",
+    "To get a response, raise the limit such as `< latency <= 3m`, remove the latency line to use the workspace default, choose a faster model/profile, or reduce prompt/file context.",
+  ].join("\n");
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isBlockingDiagnostic(diagnostic: Diagnostic): boolean {
+  return diagnostic.level === "error";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

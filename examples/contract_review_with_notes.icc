@@ -4,9 +4,15 @@
 @forward c2
 @file -markdown risk_notes.md
 
-Review the attached contract.
+Review this sample service agreement excerpt.
+
+Agreement excerpt:
+Acme Labs will provide quarterly model evaluation services to Northstar Studio for a fixed fee of $12,000 per quarter, payable within 15 days of invoice receipt. Either party may terminate for material breach if the breach is not cured within 10 business days after written notice. Acme may suspend work for unpaid invoices older than 30 days. Each party must keep non-public product plans, customer data, pricing, and technical documentation confidential for three years after termination. Acme may use anonymized performance metrics to improve its internal evaluation tools unless Northstar objects in writing. Liability is capped at fees paid in the prior three months, except for confidentiality breaches and payment obligations. Disputes will be resolved in Delaware courts.
+
 Identify obligations, termination rights, payment risks, confidentiality constraints, and clauses that need legal review.
 Write the output as concise notes with section references.
+Return the requested file as an artifact section:
+--- file: risk_notes.md ---
 
 # c2
 > openai.fast
@@ -22,3 +28,5 @@ Separate must-change items from acceptable risks.
 
 Use %from c1 and %from c2 to produce a final redline brief.
 Keep it factual and avoid inventing missing contract language.
+Return the requested file as an artifact section:
+--- file: redline_brief.md ---

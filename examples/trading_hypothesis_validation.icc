@@ -1,0 +1,22 @@
+# c1
+> openai.max
+@forward c2
+@text <700
+
+Draft a trading hypothesis for a market-making research workflow.
+Account for fees, latency, inventory risk, fill probability, and adverse selection.
+
+# c2
+> claude.max
+@forward c3
+@text <800
+
+Critique %from c1.
+Reject vague alpha claims, identify falsifiable tests, and specify what engine output would count as evidence.
+
+# c3
+> auto
+@file -markdown validation_plan.md
+
+Create a validation plan from %from c1 and %from c2.
+Include acceptance thresholds, shuffled and delayed controls, and a failure-report template.

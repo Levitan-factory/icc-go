@@ -4,15 +4,18 @@ import { PanelRightClose, PanelRightOpen, Plus } from "lucide-react";
 import { parseCellDsl } from "./language/latest";
 import { useWorkspace } from "./store/useWorkspace";
 import { Sidebar } from "./components/Sidebar";
-import { WorkspaceTopBar } from "./components/WorkspaceTopBar";
+import { WorkspaceTopBar, type WorkspaceSurface } from "./components/WorkspaceTopBar";
 import { NotebookCanvas } from "./components/NotebookCanvas";
 import { Inspector } from "./components/Inspector";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { ArtifactViewer } from "./components/ArtifactViewer";
 import { DocsPage } from "./components/DocsPage";
 import { AdminPage } from "./components/AdminPage";
+import { CodeSurface } from "./components/CodeSurface";
+import { VisualEditor } from "./visual/VisualEditor";
 import { providerAliasOptions } from "./domain/providerAliases";
 import { recordOnlineEvent } from "./domain/onlineApi";
+import { checkAppBundleFreshness, type AppBundleStatus } from "./domain/appUpdate";
 import {
   configuredOnlineAuthProviders,
   completeOnlineAuthRedirectIfNeeded,
@@ -58,11 +61,16 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute());
   const [docsOpen, setDocsOpen] = useState(() => isDocsRoute());
   const [adminOpen, setAdminOpen] = useState(() => isAdminRoute());
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [workspaceSurface, setWorkspaceSurface] = useState<WorkspaceSurface>(() => surfaceFromRoute());
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | undefined>();
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [localBackupNoticeDismissed, setLocalBackupNoticeDismissed] = useState(readLocalBackupNoticeDismissed);
   const isHostedOnline = useMemo(() => isHostedOnlineEnvironment(), []);
+  const [appBundleStatus, setAppBundleStatus] = useState<AppBundleStatus>(() => ({
+    status: "unknown",
+    checkedAt: new Date(0).toISOString(),
+  }));
   const [onlineAuth, setOnlineAuth] = useState<OnlineAuthViewState>(() => ({
     loading: isHostedOnline,
     config: disabledOnlineAuthConfig,
@@ -130,10 +138,39 @@ export function App() {
   }, [isHostedOnline]);
 
   useEffect(() => {
+    if (!isHostedOnline) return;
+
+    let cancelled = false;
+
+    async function refreshBundleStatus() {
+      const status = await checkAppBundleFreshness();
+      if (!cancelled) setAppBundleStatus(status);
+    }
+
+    void refreshBundleStatus();
+    const handleFocus = () => void refreshBundleStatus();
+    const handleVisibilityChange = () => {
+      if (!document.hidden) void refreshBundleStatus();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const intervalId = window.setInterval(refreshBundleStatus, 60000);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [isHostedOnline]);
+
+  useEffect(() => {
     function handlePopState() {
       setSettingsOpen(isSettingsRoute());
       setDocsOpen(isDocsRoute());
       setAdminOpen(isAdminRoute());
+      setWorkspaceSurface(surfaceFromRoute());
     }
 
     window.addEventListener("popstate", handlePopState);
@@ -181,6 +218,7 @@ export function App() {
     }
     setSettingsOpen(true);
     setDocsOpen(false);
+    setWorkspaceSurface(surfaceFromRoute());
   }
 
   function closeSettings() {
@@ -188,6 +226,7 @@ export function App() {
       window.history.pushState(null, "", "/");
     }
     setSettingsOpen(false);
+    setWorkspaceSurface(surfaceFromRoute());
   }
 
   function openDocs(pageId = "overview") {
@@ -197,6 +236,7 @@ export function App() {
     }
     setDocsOpen(true);
     setSettingsOpen(false);
+    setWorkspaceSurface(surfaceFromRoute());
   }
 
   function closeDocs() {
@@ -204,6 +244,18 @@ export function App() {
       window.history.pushState(null, "", "/");
     }
     setDocsOpen(false);
+    setWorkspaceSurface(surfaceFromRoute());
+  }
+
+  function setSurfaceRoute(surface: WorkspaceSurface) {
+    const nextPath = surface === "visual" ? "/" : `/${surface}`;
+    if (window.location.pathname !== nextPath || window.location.hash) {
+      window.history.pushState(null, "", nextPath);
+    }
+    setWorkspaceSurface(surface);
+    setSettingsOpen(false);
+    setDocsOpen(false);
+    setAdminOpen(false);
   }
 
   useEffect(() => {
@@ -251,7 +303,7 @@ export function App() {
       if (command && event.key === "Enter") {
         event.preventDefault();
         const cell = workspace.selectedCell;
-        if (cell && cell.kind !== "text") workspace.runCell(cell.id);
+        if (cell && cell.kind !== "text") handleRunCell(cell.id, "keyboard_current");
       }
       if (command && event.key.toLowerCase() === "d" && !editingText) {
         event.preventDefault();
@@ -263,7 +315,7 @@ export function App() {
       }
       if (command && event.key.toLowerCase() === "e") {
         event.preventDefault();
-        workspace.exportNotebook("zip");
+        handleExportNotebook("zip", "keyboard");
       }
       if (command && event.key === "/") {
         event.preventDefault();
@@ -273,7 +325,7 @@ export function App() {
         const cell = workspace.selectedCell;
         if (cell && cell.kind !== "text") {
           event.preventDefault();
-          workspace.runCell(cell.id);
+          handleRunCell(cell.id, "keyboard_shift_enter");
         }
       }
       if (event.altKey && event.key === "Enter") {
@@ -284,7 +336,14 @@ export function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onlineAccess.requiresAuth, workspace]);
+  }, [
+    onlineAccess.isHostedOnline,
+    onlineAccess.requiresAuth,
+    onlineAuth.config.apiBaseUrl,
+    onlineAuth.session?.accessToken,
+    onlineAuth.session?.user.sub,
+    workspace,
+  ]);
 
   function handleOnlineReadOnlyClick(event: MouseEvent<HTMLDivElement>) {
     if (!onlineAccess.requiresAuth) return;
@@ -303,6 +362,88 @@ export function App() {
       detail: "click",
     });
     setAuthPromptOpen(true);
+  }
+
+  function recordProductEvent(eventType: string, detail?: string, route?: string) {
+    if (!onlineAccess.isHostedOnline || !onlineAuth.config.apiBaseUrl) return;
+    void recordOnlineEvent(onlineAuth.config, onlineAuth.session, {
+      eventType,
+      detail,
+      route,
+    });
+  }
+
+  function countIntentCells() {
+    return workspace.activeNotebook?.cells.filter((cell) => cell.kind !== "text").length ?? 0;
+  }
+
+  function cellRunDetail(source: string, count = 1, cellId?: string) {
+    const cell = cellId ? workspace.activeNotebook?.cells.find((candidate) => candidate.id === cellId) : undefined;
+    return [
+      `count=${Math.max(1, count)}`,
+      `source=${source}`,
+      cell && cell.kind !== "text" ? `cell=${cell.alias}` : undefined,
+      workspace.activeNotebook ? `notebook=${workspace.activeNotebook.id}` : undefined,
+    ].filter(Boolean).join(";");
+  }
+
+  function shouldBlockStaleRun(source: string): boolean {
+    if (appBundleStatus.status !== "stale") return false;
+
+    recordProductEvent(
+      "app_update_blocked_run",
+      `source=${source};current=${appBundleStatus.currentAsset};latest=${appBundleStatus.latestAsset}`,
+    );
+    return true;
+  }
+
+  function reloadAppBundle() {
+    window.location.reload();
+  }
+
+  function handleCreateProject() {
+    recordProductEvent("project_created", "source=ui");
+    recordProductEvent("notebook_created", "source=project_create;count=1");
+    workspace.createProject();
+  }
+
+  function handleCreateNotebook(source = "ui") {
+    recordProductEvent("notebook_created", `source=${source};count=1`);
+    workspace.createNotebookInActiveProject();
+  }
+
+  function handleRunCell(cellId: string, source = "cell") {
+    if (shouldBlockStaleRun(source)) return;
+    recordProductEvent("cell_run_requested", cellRunDetail(source, 1, cellId));
+    workspace.runCell(cellId);
+  }
+
+  function handleRunFromHere(cellId: string) {
+    if (shouldBlockStaleRun("run_from_here")) return;
+    recordProductEvent("run_from_here_requested", cellRunDetail("run_from_here", 1, cellId));
+    recordProductEvent("cell_run_requested", cellRunDetail("run_from_here", 1, cellId));
+    workspace.runFromHere(cellId);
+  }
+
+  function handleRunAll() {
+    if (shouldBlockStaleRun("run_all")) return;
+    const count = countIntentCells();
+    recordProductEvent("run_all_requested", cellRunDetail("run_all", count));
+    recordProductEvent("cell_run_requested", cellRunDetail("run_all", count));
+    workspace.runAll();
+  }
+
+  function handleRunStaleCells() {
+    if (shouldBlockStaleRun("run_stale")) return;
+    const count = workspace.activeNotebook?.cells.filter((cell) => cell.kind !== "text" && cell.status === "stale").length ?? 0;
+    recordProductEvent("run_stale_requested", cellRunDetail("run_stale", count));
+    if (count) recordProductEvent("cell_run_requested", cellRunDetail("run_stale", count));
+    workspace.runStaleCells();
+  }
+
+  function handleExportNotebook(format: "json" | "md" | "zip", source = "ui") {
+    recordProductEvent("notebook_export_requested", `source=${source};format=${format}`);
+    workspace.exportNotebook(format);
   }
 
   if (adminOpen && onlineAccess.isHostedOnline) {
@@ -357,33 +498,35 @@ export function App() {
         </div>
       )}
 
+      <AppUpdateBanner status={appBundleStatus} onReload={reloadAppBundle} />
       <ProviderIssuesBanner settings={workspace.workspace.settings} onOpenSettings={openSettings} />
 
       <WorkspaceTopBar
         notebook={workspace.activeNotebook}
+        surface={workspaceSurface}
         saveStatus={workspace.saveStatus}
         lastSavedAt={workspace.lastSavedAt}
         canUndo={workspace.canUndo}
         canRedo={workspace.canRedo}
         inspectorOpen={inspectorOpen}
-        onNewProject={workspace.createProject}
-        onNewNotebook={workspace.createNotebookInActiveProject}
+        onNewProject={handleCreateProject}
+        onNewNotebook={() => handleCreateNotebook("topbar")}
         onDuplicateNotebook={workspace.duplicateNotebook}
         onDeleteNotebook={workspace.deleteNotebook}
         onSave={workspace.manualSave}
         onSaveSnapshot={workspace.saveSnapshot}
         onRestoreSnapshot={workspace.restoreSnapshot}
         onImportNotebook={workspace.importNotebookFile}
-        onExport={workspace.exportNotebook}
+        onExport={(format) => handleExportNotebook(format)}
         onDownloadArtifacts={workspace.downloadAllArtifacts}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
         onAddCell={() => workspace.addCell(workspace.selectedCell?.id)}
         onAddTextCell={() => workspace.addTextCell(workspace.selectedCell?.id)}
-        onRunCurrent={() => workspace.selectedCell?.kind !== "text" && workspace.selectedCell && workspace.runCell(workspace.selectedCell.id)}
-        onRunAll={workspace.runAll}
-        onRunStale={workspace.runStaleCells}
-        onRunFromHere={() => workspace.selectedCell && workspace.runFromHere(workspace.selectedCell.id)}
+        onRunCurrent={() => workspace.selectedCell?.kind !== "text" && workspace.selectedCell && handleRunCell(workspace.selectedCell.id, "topbar_current")}
+        onRunAll={handleRunAll}
+        onRunStale={handleRunStaleCells}
+        onRunFromHere={() => workspace.selectedCell && handleRunFromHere(workspace.selectedCell.id)}
         onStopAll={workspace.stopAllRuns}
         onValidate={() => workspace.validateNotebook(true)}
         onEstimateCost={workspace.estimateCost}
@@ -393,80 +536,94 @@ export function App() {
         onClearCurrentOutput={() => workspace.clearCellOutput()}
         onClearAllOutputs={workspace.clearAllOutputs}
         onSetViewMode={workspace.setNotebookViewMode}
+        onSetSurface={setSurfaceRoute}
         onToggleInspector={() => setInspectorOpen((current) => !current)}
         onOpenSettings={openSettings}
         onOpenDocs={openDocs}
       />
 
-      <div className="workspace-body">
-        <Sidebar
-          projects={workspace.workspace.projects}
-          activeProjectId={workspace.workspace.activeProjectId}
-          activeNotebookId={workspace.workspace.activeNotebookId}
-          onSelectProject={workspace.setActiveProject}
-          onSelectNotebook={workspace.setActiveNotebook}
-          onCreateProject={workspace.createProject}
-          onDeleteProject={workspace.deleteProject}
-          onCreateNotebook={workspace.createNotebookInActiveProject}
-          onDeleteNotebook={(notebookId) => workspace.deleteNotebook(notebookId, { confirm: false })}
-        />
+      <div className={`workspace-body ${workspaceSurface === "visual" ? "is-visual-surface" : ""}`}>
+        {workspaceSurface === "visual" ? (
+          <main className="visual-main-pane">
+            <VisualEditor />
+          </main>
+        ) : (
+          <>
+            <Sidebar
+              projects={workspace.workspace.projects}
+              activeProjectId={workspace.workspace.activeProjectId}
+              activeNotebookId={workspace.workspace.activeNotebookId}
+              runningCellIds={workspace.runningCellIds}
+              onSelectProject={workspace.setActiveProject}
+              onSelectNotebook={workspace.setActiveNotebook}
+              onCreateProject={handleCreateProject}
+              onDeleteProject={workspace.deleteProject}
+              onCreateNotebook={() => handleCreateNotebook("sidebar")}
+              onDeleteNotebook={(notebookId) => workspace.deleteNotebook(notebookId, { confirm: false })}
+            />
 
-        <main className="main-pane">
-          {workspace.activeNotebook ? (
-            <>
-              <NotebookTitleBar
-                notebook={workspace.activeNotebook}
-                onRename={workspace.renameNotebook}
-                onSetChannel={workspace.setNotebookDslChannel}
-              />
-              <NotebookCanvas
-                notebook={workspace.activeNotebook}
-                settings={workspace.workspace.settings}
-                selectedCellId={workspace.workspace.selectedCellId}
-                runningCellIds={workspace.runningCellIds}
-                onSelectCell={workspace.selectCell}
-                onUpdateCell={workspace.updateCell}
-                onAddCell={workspace.addCell}
-                onAddTextCell={workspace.addTextCell}
-                onRunCell={workspace.runCell}
-                onRunFromHere={workspace.runFromHere}
-                onStopCell={workspace.stopCell}
-                onAttachFiles={workspace.attachFilesToCell}
-                onRemoveAttachment={workspace.removeCellAttachment}
-                onDuplicateCell={workspace.duplicateCell}
-                onDeleteCell={workspace.deleteCell}
-                onMoveCell={workspace.moveCell}
-                onOpenArtifact={setSelectedArtifactId}
-              />
-            </>
-          ) : (
-            <section className="empty-notebook">
-              <div>
-                <h1>No notebook selected</h1>
-                <p>Create a notebook to start writing executable LLM cells.</p>
-              </div>
-              <button className="primary-button" type="button" onClick={workspace.createNotebookInActiveProject}>
-                <Plus size={16} />
-                New notebook
+            <main className="main-pane">
+              {workspace.activeNotebook ? (
+                <>
+                  <NotebookTitleBar
+                    notebook={workspace.activeNotebook}
+                    onRename={workspace.renameNotebook}
+                    onSetChannel={workspace.setNotebookDslChannel}
+                  />
+                  {workspaceSurface === "code" ? (
+                    <CodeSurface notebook={workspace.activeNotebook} />
+                  ) : (
+                    <NotebookCanvas
+                      notebook={workspace.activeNotebook}
+                      settings={workspace.workspace.settings}
+                      selectedCellId={workspace.workspace.selectedCellId}
+                      runningCellIds={workspace.runningCellIds}
+                      onSelectCell={workspace.selectCell}
+                      onUpdateCell={workspace.updateCell}
+                      onAddCell={workspace.addCell}
+                      onAddTextCell={workspace.addTextCell}
+                      onRunCell={(cellId) => handleRunCell(cellId, "cell_button")}
+                      onRunFromHere={handleRunFromHere}
+                      onStopCell={workspace.stopCell}
+                      onAttachFiles={workspace.attachFilesToCell}
+                      onRemoveAttachment={workspace.removeCellAttachment}
+                      onDuplicateCell={workspace.duplicateCell}
+                      onDeleteCell={workspace.deleteCell}
+                      onMoveCell={workspace.moveCell}
+                      onOpenArtifact={setSelectedArtifactId}
+                    />
+                  )}
+                </>
+              ) : (
+                <section className="empty-notebook">
+                  <div>
+                    <h1>No notebook selected</h1>
+                    <p>Create a notebook to start writing executable LLM cells.</p>
+                  </div>
+                  <button className="primary-button" type="button" onClick={() => handleCreateNotebook("empty_state")}>
+                    <Plus size={16} />
+                    New notebook
+                  </button>
+                </section>
+              )}
+            </main>
+
+            <aside className={`inspector-pane ${inspectorOpen ? "is-open" : "is-collapsed"}`}>
+              <button
+                className="inspector-toggle"
+                type="button"
+                onClick={() => setInspectorOpen((current) => !current)}
+                aria-label={inspectorOpen ? "Collapse inspector" : "Open inspector"}
+                title={inspectorOpen ? "Collapse inspector" : "Open inspector"}
+              >
+                {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
               </button>
-            </section>
-          )}
-        </main>
-
-        <aside className={`inspector-pane ${inspectorOpen ? "is-open" : "is-collapsed"}`}>
-          <button
-            className="inspector-toggle"
-            type="button"
-            onClick={() => setInspectorOpen((current) => !current)}
-            aria-label={inspectorOpen ? "Collapse inspector" : "Open inspector"}
-            title={inspectorOpen ? "Collapse inspector" : "Open inspector"}
-          >
-            {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-          </button>
-          {inspectorOpen && (
-            <Inspector cell={workspace.selectedCell} parsed={selectedParsed} settings={workspace.workspace.settings} />
-          )}
-        </aside>
+              {inspectorOpen && (
+                <Inspector cell={workspace.selectedCell} parsed={selectedParsed} settings={workspace.workspace.settings} />
+              )}
+            </aside>
+          </>
+        )}
       </div>
 
       <SettingsDrawer
@@ -498,6 +655,20 @@ export function App() {
           onSignIn={handleSignIn}
         />
       )}
+    </div>
+  );
+}
+
+function AppUpdateBanner({ status, onReload }: { status: AppBundleStatus; onReload: () => void }) {
+  if (status.status !== "stale") return null;
+
+  return (
+    <div className="app-update-banner" role="alert">
+      <strong>ICC-GO was updated.</strong>
+      <span>This tab is running an older build. Reload before running provider calls.</span>
+      <button type="button" onClick={onReload}>
+        Reload
+      </button>
     </div>
   );
 }
@@ -538,6 +709,12 @@ function isDocsRoute(): boolean {
 
 function isAdminRoute(): boolean {
   return window.location.pathname === "/admin";
+}
+
+function surfaceFromRoute(): WorkspaceSurface {
+  if (window.location.pathname === "/code") return "code";
+  if (window.location.pathname === "/notebook") return "notebook";
+  return "visual";
 }
 
 function isGatedKeyboardAction(event: KeyboardEvent, editingText: boolean): boolean {

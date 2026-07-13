@@ -64,7 +64,7 @@ This page covers notebook-level controls, menus, shortcuts, and exports.
 - `> openai.max` uses the saved OpenAI key and its max profile.
 - `> openrouter.max` uses the saved OpenRouter key and its max profile. The default OpenRouter max model is `openrouter/auto`.
 - `> openrouter:openai/gpt-4o` uses the saved OpenRouter key to call the OpenAI model id through OpenRouter.
-- `> openrouter:anthropic/claude-sonnet-4.5` and `> openrouter:deepseek/deepseek-chat:free` are valid explicit OpenRouter routes.
+- `> openrouter:~anthropic/claude-sonnet-latest` and `> openrouter:deepseek/deepseek-chat:free` are valid explicit OpenRouter routes.
 - `> openrouter.openai.max` is not ICC syntax. Use `:` for an explicit OpenRouter model id.
 - If the OpenRouter alias is renamed to `router`, write `> router.max` or `> router:openai/gpt-4o`.
 - `.ensemble` is a group orchestration mode, not a provider profile. Write `> (openai + claude).ensemble`; do not write `> openai.ensemble`.

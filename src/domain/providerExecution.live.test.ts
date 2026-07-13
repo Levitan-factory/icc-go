@@ -58,6 +58,46 @@ describeLive("live provider execution", () => {
     }, 120_000);
   });
 
+  it.skipIf(!envForProvider("openai") || !envForProvider("openrouter"))(
+    "executes grouped .best with real provider candidates and a selector",
+    async () => {
+      const workspace = liveWorkspace();
+      const cell = testCell(
+        workspace,
+        "> (openai + openrouter).best",
+        "Reply with exactly ICC_GROUP_BEST_OK. No markdown. No extra words.",
+      );
+
+      const result = await executeCellRun(cell, parse(workspace, cell), workspace.settings);
+
+      expect(result.status).toBe("completed");
+      expect(result.output).not.toContain("Simulated provider run");
+      expect(result.output.toUpperCase()).toContain("ICC_GROUP_BEST_OK");
+      expect(result.run.providerRuns.length).toBeGreaterThanOrEqual(2);
+    },
+    180_000,
+  );
+
+  it.skipIf(!envForProvider("openai") || !envForProvider("openrouter"))(
+    "executes grouped .ensemble with real provider candidates and a synthesizer",
+    async () => {
+      const workspace = liveWorkspace();
+      const cell = testCell(
+        workspace,
+        "> (openai + openrouter).ensemble",
+        "Reply with exactly ICC_GROUP_ENSEMBLE_OK. No markdown. No extra words.",
+      );
+
+      const result = await executeCellRun(cell, parse(workspace, cell), workspace.settings);
+
+      expect(result.status).toBe("completed");
+      expect(result.output).not.toContain("Simulated provider run");
+      expect(result.output.toUpperCase()).toContain("ICC_GROUP_ENSEMBLE_OK");
+      expect(result.run.providerRuns.length).toBeGreaterThanOrEqual(2);
+    },
+    180_000,
+  );
+
   it.skipIf(!envForProvider("openai"))("passes %from output into the next live cell without returning the prior prompt", async () => {
     const workspace = liveWorkspace();
     const notebook = workspace.projects[0].notebooks[0];
@@ -88,6 +128,82 @@ describeLive("live provider execution", () => {
     expect(c2Result.status).toBe("completed");
     expect(c2Result.output).not.toBe(c1Result.output);
     expect(c2Result.output.toUpperCase()).toContain("FORWARD_OK");
+  }, 120_000);
+
+  it.skipIf(!envForProvider("openai"))("evaluates live @if/@else output variables and selects the true branch", async () => {
+    const workspace = liveWorkspace();
+    const cell = testCell(
+      workspace,
+      "> openai\n@if accepted == true -> c2\n@else -> c3\n@text <120",
+      [
+        "Reply with exactly these two lines and no markdown:",
+        "accepted = true",
+        "reason = live_if_else_smoke",
+      ].join("\n"),
+    );
+
+    const result = await executeCellRun(cell, parse(workspace, cell), workspace.settings);
+
+    if (result.status !== "completed") {
+      console.info(
+        "live-if-debug",
+        JSON.stringify(
+          {
+            status: result.status,
+            rawOutput: result.run.textOutputRaw,
+            vars: result.vars,
+            decision: result.decision,
+            errors: result.errors,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    expect(result.status).toBe("completed");
+    expect(result.output).not.toContain("Simulated provider run");
+    expect(result.vars.accepted).toBe(true);
+    expect(result.decision?.routeTarget).toBe("c2");
+    expect(result.decision?.skippedTargets).toEqual(["c3"]);
+  }, 120_000);
+
+  it.skipIf(!envForProvider("openai"))("evaluates live @if/@else output variables and selects the else branch", async () => {
+    const workspace = liveWorkspace();
+    const cell = testCell(
+      workspace,
+      "> openai\n@if score > 0 -> c2\n@else -> c3\n@text <120",
+      [
+        "Reply with exactly these two lines and no markdown:",
+        "score = -1",
+        "reason = live_if_else_false_smoke",
+      ].join("\n"),
+    );
+
+    const result = await executeCellRun(cell, parse(workspace, cell), workspace.settings);
+
+    if (result.status !== "completed") {
+      console.info(
+        "live-if-else-debug",
+        JSON.stringify(
+          {
+            status: result.status,
+            rawOutput: result.run.textOutputRaw,
+            vars: result.vars,
+            decision: result.decision,
+            errors: result.errors,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    expect(result.status).toBe("completed");
+    expect(result.output).not.toContain("Simulated provider run");
+    expect(result.vars.score).toBe(-1);
+    expect(result.decision?.routeTarget).toBe("c3");
+    expect(result.decision?.skippedTargets).toEqual(["c2"]);
   }, 120_000);
 
   it.skipIf(!envForProvider("openai"))("extracts a live markdown artifact and keeps @text as an instruction instead of clipping", async () => {
